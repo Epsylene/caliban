@@ -2,14 +2,18 @@ mod app;
 
 use winit::{
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::EventLoop,
     window::WindowBuilder,
     dpi::LogicalSize,
 };
+use anyhow::Result;
+use log::*;
 
 use app::App;
 
-fn main() {
+fn main() -> Result<()> {
+    pretty_env_logger::init();
+
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("caliban")
@@ -17,7 +21,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut app = App::create(&window);
+    let mut app = unsafe { App::create(&window)? };
     let mut destroying = false;
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
@@ -28,11 +32,12 @@ fn main() {
                 ..
             } => {
                 destroying = true;
+                info!("Destroying the app.");
                 control_flow.set_exit();
-                app.destroy();
+                unsafe { app.destroy(); }
             },
             Event::MainEventsCleared if !destroying => {
-                app.render(&window);
+                unsafe { app.render(&window) }.unwrap();
             },
             _ => (),
         }
