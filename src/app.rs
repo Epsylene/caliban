@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    ffi::CString,
-    os::raw::c_char,
-};
+use std::collections::HashSet;
 
 use winit::window::Window;
 use vulkanalia::{
@@ -55,6 +51,8 @@ impl App {
     }
 
     unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
+        info!("Creating the Vulkan instance.");
+        
         // Validation layers: because the Vulkan API is designed
         // around the idea of minimal driver overhead, there is
         // very little default error checking. Instead, Vulkan
@@ -64,19 +62,20 @@ impl App {
         // Validation layers can only be used if they have been
         // installed onto the system, for example as part of the
         // LunarG Vulkan SDK. We then first need to get the list
-        // of available layers:
+        // of available layers...
         let available_layers = entry
-        .enumerate_instance_layer_properties()?
-        .iter()
-        .map(|l| l.layer_name)
-        .collect::<HashSet<_>>();
+            .enumerate_instance_layer_properties()?
+            .iter()
+            .map(|l| l.layer_name)
+            .collect::<HashSet<_>>();
     
-        // And then enable validation layers if they are
-        // available and the program is built in debug mode
+        // ...then check if validation layers are available...
         if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
             return Err(anyhow!("Validation layer not available."));
         }
         
+        // ...and finally put in our layers list, which we will
+        // give to Vulkan later.
         let layers = if VALIDATION_ENABLED {
             vec![VALIDATION_LAYER.as_ptr()]
         } else {
@@ -131,26 +130,34 @@ impl App {
 
         // Instance info: combines the application and
         // extensions info, and enables the given layers
-        let info = vk::InstanceCreateInfo::builder()
+        let mut info = vk::InstanceCreateInfo::builder()
             .application_info(&application_info)
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions)
             .flags(flags);
 
+        // Debug info: set up a debug messenger for the
+        // validation layers, that calls our debug callback
+        // function to print messages for all severity levels
+        // and types of events.
+        let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+            .user_callback(Some(debug_callback));
+
+        if VALIDATION_ENABLED {
+            // Vulkan structs, like the instance info, have the
+            // ability to be extended with other structs,  
+            info = info.push_next(&mut debug_info);
+        }
+
         // We can give a custom allocator to the instance, but
-        // here we set it to None
+        // we set it here to None.
         let instance = entry.create_instance(&info, None)?;
 
         if VALIDATION_ENABLED {
-            // If the validation layers are enabled, we are
-            // setting up the debug messenger of the API to
-            // print with our debug callback function for all
-            // severity levels and all events.
-            let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-                .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
-                .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
-                .user_callback(Some(debug_callback));
-
+            // Create the debug messenger in the instance with
+            // our debug info and link it to our app data
             data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
         }
 

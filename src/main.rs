@@ -12,6 +12,7 @@ use log::*;
 use app::App;
 
 fn main() -> Result<()> {
+    std::env::set_var("RUST_LOG", "info");
     pretty_env_logger::init();
 
     let event_loop = EventLoop::new();
