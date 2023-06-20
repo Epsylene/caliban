@@ -1,25 +1,42 @@
+use std::{
+    collections::HashSet,
+    ffi::CString,
+    os::raw::c_char,
+};
+
 use winit::window::Window;
 use vulkanalia::{
     prelude::v1_0::*,
     window as vk_window,
     loader::{LibloadingLoader, LIBRARY},
     Version,
+    vk::ExtDebugUtilsExtension,
 };
 use anyhow::{anyhow, Result};
 use log::*;
 
+const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
+
+#[derive(Default)]
+struct AppData {
+    debug_messenger: vk::DebugUtilsMessengerEXT,
+}
+
 pub struct App {
     entry: Entry,
     instance: Instance,
+    data: AppData,
 }
 
 impl App {
     pub unsafe fn create(window: &Window) -> Result<Self> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
-        let instance = Self::create_instance(window, &entry)?;
+        let mut data = AppData::default();
+        let instance = Self::create_instance(window, &entry, &mut data)?;
         
-        Ok(Self { entry, instance })
+        Ok(Self { entry, instance, data })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -29,10 +46,43 @@ impl App {
 
     pub unsafe fn destroy(&mut self) {
         info!("Destroying the Vulkan instance.");
+
+        if VALIDATION_ENABLED {
+            self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
+        }
+
         self.instance.destroy_instance(None);
     }
 
-    unsafe fn create_instance(window: &Window, entry: &Entry) -> Result<Instance> {
+    unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
+        // Validation layers: because the Vulkan API is designed
+        // around the idea of minimal driver overhead, there is
+        // very little default error checking. Instead, Vulkan
+        // provides "validation layers", which are optional
+        // components that hook into Vulkan function calls to
+        // apply additional checks and debug operations.
+        // Validation layers can only be used if they have been
+        // installed onto the system, for example as part of the
+        // LunarG Vulkan SDK. We then first need to get the list
+        // of available layers:
+        let available_layers = entry
+        .enumerate_instance_layer_properties()?
+        .iter()
+        .map(|l| l.layer_name)
+        .collect::<HashSet<_>>();
+    
+        // And then enable validation layers if they are
+        // available and the program is built in debug mode
+        if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
+            return Err(anyhow!("Validation layer not available."));
+        }
+        
+        let layers = if VALIDATION_ENABLED {
+            vec![VALIDATION_LAYER.as_ptr()]
+        } else {
+            Vec::new()
+        };
+
         // Application info: application name and version,
         // engine name and version, and Vulkan API version. The
         // Vulkan API version is required and must be set to
@@ -45,11 +95,18 @@ impl App {
             .api_version(vk::make_version(1, 0, 0));
 
         // Extensions: enumerate the required extensions for
-        // window integration and convert them to C strings
+        // window integration and convert them to C strings.
         let mut extensions = vk_window::get_required_instance_extensions(window)
             .iter()
             .map(|e| e.as_ptr())
             .collect::<Vec<_>>();
+
+        // If the validation layers are enabled, we add the
+        // debut utils extension to set up a callback for the
+        // validation layer messages.
+        if VALIDATION_ENABLED {
+            extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
+        }
 
         // Some platforms have not a fully compliant Vulkan
         // implementation, and need since v1.3.216 of the Vulkan
@@ -73,14 +130,74 @@ impl App {
         };
 
         // Instance info: combines the application and
-        // extensions info
+        // extensions info, and enables the given layers
         let info = vk::InstanceCreateInfo::builder()
             .application_info(&application_info)
+            .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions)
             .flags(flags);
 
         // We can give a custom allocator to the instance, but
         // here we set it to None
-        entry.create_instance(&info, None).map_err(Into::into)
+        let instance = entry.create_instance(&info, None)?;
+
+        if VALIDATION_ENABLED {
+            // If the validation layers are enabled, we are
+            // setting up the debug messenger of the API to
+            // print with our debug callback function for all
+            // severity levels and all events.
+            let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
+                .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+                .user_callback(Some(debug_callback));
+
+            data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
+        }
+
+        Ok(instance)
     }
+}
+
+extern "system" fn debug_callback(
+    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    type_: vk::DebugUtilsMessageTypeFlagsEXT,
+    data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    // The debug callback function ensures that we print
+    // messages with our own log system instead of the
+    // standard output. The 'extern "system"' bit links the
+    // function to the system ABI, instead of the Rust one,
+    // which is required for Vulkan to use it directly;
+    // furthermore, the function prototype needs to match
+    // that of vk::PFN_vkDebugUtilsMessengerCallbackEXT,
+    // which specifies four parameters:
+    //  1) 'messageSeverity': the importance of the message,
+    //     as standard DEBUG, WARNING, ERR, ..., log levels
+    //  2) 'messageType': the type of event associated,
+    //     either GENERAL (unrelated to the specification),
+    //     VALIDATION (specification violation) or
+    //     PERFORMANCE (non-optimal use of the API)
+    //  3) 'pCallbackData': the debug message data
+    //  4) 'pUserData': a pointer to user-defined data, here
+    //     unused
+
+    let data = unsafe { *data };
+    let message = unsafe { std::ffi::CStr::from_ptr(data.message) }.to_string_lossy();
+    
+    if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
+        error!("({type_:?}) {message}");
+    } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
+        warn!("({type_:?}) {message}");
+    } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
+        debug!("({type_:?}) {message}");
+    } else {
+        trace!("({type_:?}) {message}");
+    }
+
+    // If the callback returns true, the call is aborted
+    // with a VALIDATION_FAILED error code; it should then
+    // only return true when testing the validation layers
+    // themselves.
+    vk::FALSE
 }
