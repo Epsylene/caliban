@@ -1,4 +1,4 @@
-use crate::devices::*;
+use crate::{devices::*, queues::QueueFamilyIndices};
 use std::collections::HashSet;
 
 use winit::window::Window;
@@ -14,29 +14,43 @@ use log::*;
 
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
+const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 #[derive(Default)]
 pub struct AppData {
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
+    pub graphics_queue: vk::Queue,
 }
 
 pub struct App {
     entry: Entry,
     instance: Instance,
     data: AppData,
+    device: Device,
 }
 
 impl App {
     pub unsafe fn create(window: &Window) -> Result<Self> {
+        // To create a Vulkan instance, we first need a special
+        // function loader to load the initial commands from the
+        // Vulkan DLL. Next we create an entry point using this
+        // loader, and finally use the entry point, window
+        // handle and application data to create the Vulkan
+        // instance.
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
         
+        // The next step involves choosing a physical device to
+        // use on the system (the graphics card, for example),
+        // and then creating a logical device to interface it
+        // with the application.
         pick_physical_device(&instance, &mut data)?;
+        let device = create_logical_device(&entry, &instance, &mut data)?;
 
-        Ok(Self { entry, instance, data })
+        Ok(Self { entry, instance, data, device })  
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -46,6 +60,8 @@ impl App {
 
     pub unsafe fn destroy(&mut self) {
         info!("Destroying the Vulkan instance.");
+        
+        self.device.destroy_device(None);
 
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
@@ -118,7 +134,6 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     // those platforms is none other than macOS, so we check
     // the target OS and the Vulkan API version to enable
     // those extensions if needed.
-    const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
     let flags = if
         cfg!(target_os = "macos") &&
         entry.version()? >= PORTABILITY_MACOS_VERSION
@@ -167,6 +182,76 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     }
 
     Ok(instance)
+}
+
+unsafe fn create_logical_device(
+    entry: &Entry, 
+    instance: &Instance, 
+    data: &mut AppData,
+) -> Result<Device> {
+    // The logical device serves as a layer between a physical
+    // device and the application. There might be more than one
+    // logical device per physical device, each representing
+    // different sets of requirements. To create the logical
+    // device, we need to build a representation of the queue
+    // families of the physical device we are using, and in
+    // particular to specify the number of queues for each queue
+    // family; most drivers will only allow for a small number
+    // of queues per family, but that is not a problem since the
+    // command buffers can be created on multiple threads and
+    // submitted all at once with minimal overhead. To build the
+    // queue family info, we first need to get the indices of the
+    // physical device queue families.
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    
+    // We can then build the queues info struct. Vulkan lets you
+    // give each queue a priority between 0.0 and 1.0, which
+    // will influence the scheduling of command buffers
+    // execution; we only have one queue, but we are still
+    // required to provide the priorities, so we give it a value
+    // of 1.
+    let priorities = &[1.0];
+    let queue = vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(indices.graphics)
+        .queue_priorities(priorities);
+
+    // The next piece of information for the logical devices are
+    // layers and extensions. Previous implementations of Vulkan
+    // made a distinction between instance and device specific
+    // validation layers, but this is no longer the case.
+    // However, it is still a good idea to set them anyway to be
+    // compatible with older implementations.
+    let layers = if VALIDATION_ENABLED {
+        vec![VALIDATION_LAYER.as_ptr()]
+    } else {
+        vec![]
+    };
+
+    // Some implementations are not fully conformant, so certain
+    // Vulkan extensions need to be enabled to ensure
+    // portability.
+    // let mut extensions = Vec::new();
+    // if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
+    //     extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
+    // }
+
+    // We can then specify the set of device features we are
+    // going to use. Nothing special for now.
+    let features = vk::PhysicalDeviceFeatures::builder();
+
+    let queues = &[queue];
+    let info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(queues)
+        .enabled_layer_names(&layers)
+        // .enabled_extension_names(&[extensions])
+        .enabled_features(&features);
+
+    // Finally, we can create the device, and set our handle to
+    // the graphics queue.
+    let device = instance.create_device(data.physical_device, &info, None)?;
+    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+
+    Ok(device)
 }
 
 extern "system" fn debug_callback(

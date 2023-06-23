@@ -5,7 +5,7 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::{anyhow, Result};
 
 pub struct QueueFamilyIndices {
-    graphics: u32,
+    pub graphics: u32,
 }
 
 impl QueueFamilyIndices {
