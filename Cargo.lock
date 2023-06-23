@@ -131,6 +131,7 @@ dependencies = [
  "anyhow",
  "log",
  "pretty_env_logger",
+ "thiserror",
  "vulkanalia",
  "winit",
 ]

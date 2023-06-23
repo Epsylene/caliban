@@ -1,4 +1,6 @@
 mod app;
+mod queues;
+mod devices;
 
 use winit::{
     event::{Event, WindowEvent},
@@ -38,6 +40,10 @@ fn main() -> Result<()> {
                 unsafe { app.destroy(); }
             },
             Event::MainEventsCleared if !destroying => {
+                // Render the app if the main events are cleared
+                // and it is not being destroyed (which is why
+                // we use the 'destroying' boolean in the first
+                // place)
                 unsafe { app.render(&window) }.unwrap();
             },
             _ => (),
