@@ -1,11 +1,12 @@
 
 use crate::{app::AppData, devices::SuitabilityError};
 
-use vulkanalia::prelude::v1_0::*;
+use vulkanalia::{prelude::v1_0::*, vk::KhrSurfaceExtension};
 use anyhow::{anyhow, Result};
 
 pub struct QueueFamilyIndices {
     pub graphics: u32,
+    pub present: u32,
 }
 
 impl QueueFamilyIndices {
@@ -31,8 +32,24 @@ impl QueueFamilyIndices {
             .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
             .map(|i| i as u32);
 
-        if let Some(graphics) = graphics {
-            Ok(Self { graphics })
+        // Then do the same for presentation, that is, that
+        // there is a queue family in the device that supports
+        // presenting images to a Vulkan surface (in other
+        // words, rendering to a window).
+        let mut present = None;
+        for (index, _) in queues.iter().enumerate() {
+            if instance.get_physical_device_surface_support_khr(
+                physical_device,
+                index as u32,
+                data.surface,
+            )? {
+                present = Some(index as u32);
+                break;
+            }
+        }
+
+        if let (Some(graphics), Some(present)) = (graphics, present) {
+            Ok(Self { graphics, present })
         } else {
             Err(anyhow!(SuitabilityError("Missing required queue families.")))
         }

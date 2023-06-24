@@ -8,6 +8,7 @@ use vulkanalia::{
     loader::{LibloadingLoader, LIBRARY},
     Version,
     vk::ExtDebugUtilsExtension,
+    vk::KhrSurfaceExtension,
 };
 use anyhow::{anyhow, Result};
 use log::*;
@@ -18,9 +19,24 @@ const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 #[derive(Default)]
 pub struct AppData {
+    // - Surface: the Vulkan surface object, an abstraction of
+    //   the native window object on which to render images
+    // - Debug messenger: a messenger object for handling
+    //   callbacks from the validation layers (that is, to print
+    //   messages from the validation layers with our log system
+    //   instead of the standard output)
+    // - Physical device: the physical device to use for the
+    //   graphics, in other words the graphics card (most of the
+    //   time)
+    // - Graphics queue: where graphics commands are sent to
+    //   while waiting for execution
+    // - Presentation queue: the queue for rendering images to
+    //   the surface
+    pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
+    pub present_queue: vk::Queue,
 }
 
 pub struct App {
@@ -43,6 +59,19 @@ impl App {
         let mut data = AppData::default();
         let instance = create_instance(window, &entry, &mut data)?;
         
+        // Since Vulkan is a platform agnostic API, it does not
+        // interface directly with the window system on its own;
+        // instead, it exposes surface objects, abstract
+        // representations of native window objects to render
+        // images on. As with any other Vulkan object, the
+        // creation of the surface involves first filling an
+        // info struct (that takes the Win32 window handles on
+        // Windows, for example) and then actually creating the
+        // object; however, Vulkanalia provides a convenient
+        // function to handle the platform differences for us
+        // and return a proper Vulkan surface.
+        data.surface = vk_window::create_surface(&instance, &window, &window)?;
+
         // The next step involves choosing a physical device to
         // use on the system (the graphics card, for example),
         // and then creating a logical device to interface it
@@ -62,6 +91,7 @@ impl App {
         info!("Destroying the Vulkan instance.");
         
         self.device.destroy_device(None);
+        self.instance.destroy_surface_khr(self.data.surface, None);
 
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
@@ -200,20 +230,32 @@ unsafe fn create_logical_device(
     // of queues per family, but that is not a problem since the
     // command buffers can be created on multiple threads and
     // submitted all at once with minimal overhead. To build the
-    // queue family info, we first need to get the indices of the
-    // physical device queue families.
+    // queue family info, we first need to get the indices of
+    // the physical device queue families.
     let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
     
-    // We can then build the queues info struct. Vulkan lets you
-    // give each queue a priority between 0.0 and 1.0, which
-    // will influence the scheduling of command buffers
-    // execution; we only have one queue, but we are still
-    // required to provide the priorities, so we give it a value
-    // of 1.
+    let mut unique_indices = HashSet::new();
+    unique_indices.insert(indices.graphics);
+    unique_indices.insert(indices.present);
+
+    // We can then build the queue families info struct. For
+    // each supported queue family in our device, we are
+    // providing its index on the device to Vulkan and building
+    // the set of associated queues with their priorities (that
+    // is, a number between 0.0 and 1.0 which influences the
+    // scheduling of command buffers execution); since we only
+    // want one queue per family, but are still required to
+    // provide the priorities, we simply input the array [1.0].
     let priorities = &[1.0];
-    let queue = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(indices.graphics)
-        .queue_priorities(priorities);
+    let queues = unique_indices
+        .iter()
+        .map(|&index| {
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(index)
+                .queue_priorities(priorities)
+                .build()
+        })
+        .collect::<Vec<_>>();
 
     // The next piece of information for the logical devices are
     // layers and extensions. Previous implementations of Vulkan
@@ -239,17 +281,20 @@ unsafe fn create_logical_device(
     // going to use. Nothing special for now.
     let features = vk::PhysicalDeviceFeatures::builder();
 
-    let queues = &[queue];
+    // The device info struct combines all the information we
+    // have gathered so far.
     let info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(queues)
+        .queue_create_infos(&queues)
         .enabled_layer_names(&layers)
         // .enabled_extension_names(&[extensions])
         .enabled_features(&features);
 
-    // Finally, we can create the device, and set our handle to
-    // the graphics queue.
+    // Finally, we can create the device, and set our app handles
+    // for the graphics and presentation queues.
     let device = instance.create_device(data.physical_device, &info, None)?;
+    
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
+    data.present_queue = device.get_device_queue(indices.present, 0);
 
     Ok(device)
 }
