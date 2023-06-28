@@ -1,6 +1,7 @@
 mod app;
 mod queues;
 mod devices;
+mod swapchain;
 
 use winit::{
     event::{Event, WindowEvent},
@@ -35,9 +36,9 @@ fn main() -> Result<()> {
                 ..
             } => {
                 destroying = true;
-                info!("Destroying the app.");
                 control_flow.set_exit();
                 unsafe { app.destroy(); }
+                info!("Destroyed the app.");
             },
             Event::MainEventsCleared if !destroying => {
                 // Render the app if the main events are cleared

@@ -1,4 +1,8 @@
-use crate::{devices::*, queues::QueueFamilyIndices};
+use crate::{
+    devices::*,
+    queues::QueueFamilyIndices,
+    swapchain::*,
+};
 use std::collections::HashSet;
 
 use winit::window::Window;
@@ -9,6 +13,7 @@ use vulkanalia::{
     Version,
     vk::ExtDebugUtilsExtension,
     vk::KhrSurfaceExtension,
+    vk::KhrSwapchainExtension,
 };
 use anyhow::{anyhow, Result};
 use log::*;
@@ -30,13 +35,24 @@ pub struct AppData {
     //   time)
     // - Graphics queue: where graphics commands are sent to
     //   while waiting for execution
-    // - Presentation queue: the queue for rendering images to
-    //   the surface
+    // - Presentation queue: queue for rendering images to the
+    //   surface
+    // - Swapchain: an abstraction for an array of presentable
+    //   images associated with a surface
+    // - Swapchain images: the images controlled by the
+    //   swapchain
+    // - Swapchain format: the format of the swapchain images
+    // - Swapchain extent: the resolution of the swapchain
+    //   images
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
     pub present_queue: vk::Queue,
+    pub swapchain: vk::SwapchainKHR,
+    pub swapchain_images: Vec<vk::Image>,
+    pub swapchain_format: vk::Format,
+    pub swapchain_extent: vk::Extent2D,
 }
 
 pub struct App {
@@ -71,6 +87,7 @@ impl App {
         // function to handle the platform differences for us
         // and return a proper Vulkan surface.
         data.surface = vk_window::create_surface(&instance, &window, &window)?;
+        info!("Created the surface.");
 
         // The next step involves choosing a physical device to
         // use on the system (the graphics card, for example),
@@ -78,6 +95,11 @@ impl App {
         // with the application.
         pick_physical_device(&instance, &mut data)?;
         let device = create_logical_device(&entry, &instance, &mut data)?;
+
+        // We then have to create the swapchain, which is the
+        // actual structure presenting rendered images to the
+        // surface.
+        create_swapchain(window, &instance, &device, &mut data)?;
 
         Ok(Self { entry, instance, data, device })  
     }
@@ -88,22 +110,21 @@ impl App {
     }
 
     pub unsafe fn destroy(&mut self) {
-        info!("Destroying the Vulkan instance.");
-        
+        self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
+        
         self.instance.destroy_surface_khr(self.data.surface, None);
-
+        
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
         }
-
+        
         self.instance.destroy_instance(None);
+        info!("Destroyed the Vulkan instance.");
     }
 }
 
 unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
-    info!("Creating the Vulkan instance.");
-    
     // Validation layers: because the Vulkan API is designed
     // around the idea of minimal driver overhead, there is
     // very little default error checking. Instead, Vulkan
@@ -211,6 +232,7 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
     }
 
+    info!("Vulkan instance created.");
     Ok(instance)
 }
 
@@ -269,13 +291,18 @@ unsafe fn create_logical_device(
         vec![]
     };
 
+    // Then we add the required extensions.
+    let mut extensions = REQUIRED_EXTENSIONS
+        .iter()
+        .map(|e| e.as_ptr())
+        .collect::<Vec<_>>();
+
     // Some implementations are not fully conformant, so certain
     // Vulkan extensions need to be enabled to ensure
     // portability.
-    // let mut extensions = Vec::new();
-    // if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
-    //     extensions.push(vk::KHR_PORTABILITY_SUBSET_EXTENSION.name.as_ptr());
-    // }
+    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
+        extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
+    }
 
     // We can then specify the set of device features we are
     // going to use. Nothing special for now.
@@ -286,7 +313,7 @@ unsafe fn create_logical_device(
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queues)
         .enabled_layer_names(&layers)
-        // .enabled_extension_names(&[extensions])
+        .enabled_extension_names(&extensions)
         .enabled_features(&features);
 
     // Finally, we can create the device, and set our app handles
@@ -296,6 +323,7 @@ unsafe fn create_logical_device(
     data.graphics_queue = device.get_device_queue(indices.graphics, 0);
     data.present_queue = device.get_device_queue(indices.present, 0);
 
+    info!("Created the logical device.");
     Ok(device)
 }
 

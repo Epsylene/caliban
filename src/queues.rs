@@ -32,10 +32,9 @@ impl QueueFamilyIndices {
             .position(|p| p.queue_flags.contains(vk::QueueFlags::GRAPHICS))
             .map(|i| i as u32);
 
-        // Then do the same for presentation, that is, that
-        // there is a queue family in the device that supports
-        // presenting images to a Vulkan surface (in other
-        // words, rendering to a window).
+        // Then do the same for presentation, that is, queue
+        // families that support presenting images to a Vulkan
+        // surface (in other words, rendering to a window).
         let mut present = None;
         for (index, _) in queues.iter().enumerate() {
             if instance.get_physical_device_surface_support_khr(
