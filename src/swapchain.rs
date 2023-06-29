@@ -141,6 +141,77 @@ fn get_swapchain_extent(
     }
 }
 
+pub unsafe fn create_swapchain_image_views(
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // The swapchain is a structure to hold and present images.
+    // In Vulkan, however, images are not used as such, but
+    // under what is called an "image view", which describes how
+    // to access the image and which parts of the image to
+    // access.
+    data.swapchain_image_views = data
+        .swapchain_images
+        .iter()
+        .map(|&i| {
+            // The first element of the view to define is how
+            // the image colors are mapped to the image view
+            // colors. We don't want to swizzle the color
+            // components here, so we just go for the identity.
+            let component_mapping = vk::ComponentMapping::builder()
+                .r(vk::ComponentSwizzle::IDENTITY)
+                .g(vk::ComponentSwizzle::IDENTITY)
+                .b(vk::ComponentSwizzle::IDENTITY)
+                .a(vk::ComponentSwizzle::IDENTITY)
+                .build();
+
+            // The next thing to consider is the subresource
+            // range, which describes the image's purpose and
+            // which parts of the image should be accessed,
+            // among other things:
+            // - aspect_mask: the part of the image data (the
+            //   image aspect) to be accessed (one image could
+            //   contain both RGB data and depth info bits, for
+            //   example)
+            // - base_mip_level: the first accessible mipmap
+            //   level (here 0, since we don't use mipmapping
+            //   yet)
+            // - level_count: the number of accessible mipmap
+            //   levels
+            // - base_array_layer: the first accessible array
+            //   layer
+            // - layer_count: the number of accessible array
+            //   layers (simultaneous views of the same image,
+            //   for example for stereoscopic rendering)
+            let subresource_range = vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+                .build();
+
+            // Then we can build the info struct, containing the
+            // image itself, the view type of the image (1D, 2D,
+            // or 3D texture, cube map), its format, the mapping
+            // of the color components between the image and the
+            // view, and the subresource range of the image
+            // view.
+            let info = vk::ImageViewCreateInfo::builder()
+                .image(i)
+                .view_type(vk::ImageViewType::_2D)
+                .format(data.swapchain_format)
+                .components(component_mapping)
+                .subresource_range(subresource_range);
+
+            device.create_image_view(&info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    info!("Created the swapchain image views.");
+    Ok(())
+}
+
 pub unsafe fn create_swapchain(
 window: &Window,
 instance: &Instance,

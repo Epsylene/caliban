@@ -44,6 +44,8 @@ pub struct AppData {
     // - Swapchain format: the format of the swapchain images
     // - Swapchain extent: the resolution of the swapchain
     //   images
+    // - Swapchain image views: views of the swapchain images,
+    //   which describe how they should be accessed
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -53,6 +55,7 @@ pub struct AppData {
     pub swapchain_images: Vec<vk::Image>,
     pub swapchain_format: vk::Format,
     pub swapchain_extent: vk::Extent2D,
+    pub swapchain_image_views: Vec<vk::ImageView>,
 }
 
 pub struct App {
@@ -97,11 +100,13 @@ impl App {
         let device = create_logical_device(&entry, &instance, &mut data)?;
 
         // We then have to create the swapchain, which is the
-        // actual structure presenting rendered images to the
-        // surface.
+        // structure presenting rendered images to the surface,
+        // and the swapchain image views, which are the actual
+        // way Vulkan accesses the swapchain images.
         create_swapchain(window, &instance, &device, &mut data)?;
+        create_swapchain_image_views(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device })  
+        Ok(Self { entry, instance, data, device })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -110,6 +115,10 @@ impl App {
     }
 
     pub unsafe fn destroy(&mut self) {
+        self.data.swapchain_image_views.iter().for_each(|&view| {
+            self.device.destroy_image_view(view, None);
+        });
+
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
         
