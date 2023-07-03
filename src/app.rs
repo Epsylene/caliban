@@ -1,6 +1,6 @@
 use crate::{
     devices::*,
-    queues::QueueFamilyIndices,
+    shaders::*,
     swapchain::*,
 };
 use std::collections::HashSet;
@@ -18,9 +18,9 @@ use vulkanalia::{
 use anyhow::{anyhow, Result};
 use log::*;
 
-const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
-const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
-const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
+pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+pub const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
+pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 
 #[derive(Default)]
 pub struct AppData {
@@ -90,7 +90,7 @@ impl App {
         // function to handle the platform differences for us
         // and return a proper Vulkan surface.
         data.surface = vk_window::create_surface(&instance, &window, &window)?;
-        info!("Created the surface.");
+        info!("Surface created.");
 
         // The next step involves choosing a physical device to
         // use on the system (the graphics card, for example),
@@ -105,6 +105,12 @@ impl App {
         // way Vulkan accesses the swapchain images.
         create_swapchain(window, &instance, &device, &mut data)?;
         create_swapchain_image_views(&device, &mut data)?;
+
+        // Then enter the graphics pipeline (the succession of
+        // shader stages that go from taking a bunch of vertices
+        // to presenting a properly shaded set of pixels to the
+        // screen):
+        create_pipeline(&device, &mut data)?;
 
         Ok(Self { entry, instance, data, device })
     }
@@ -245,95 +251,84 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     Ok(instance)
 }
 
-unsafe fn create_logical_device(
-    entry: &Entry, 
-    instance: &Instance, 
-    data: &mut AppData,
-) -> Result<Device> {
-    // The logical device serves as a layer between a physical
-    // device and the application. There might be more than one
-    // logical device per physical device, each representing
-    // different sets of requirements. To create the logical
-    // device, we need to build a representation of the queue
-    // families of the physical device we are using, and in
-    // particular to specify the number of queues for each queue
-    // family; most drivers will only allow for a small number
-    // of queues per family, but that is not a problem since the
-    // command buffers can be created on multiple threads and
-    // submitted all at once with minimal overhead. To build the
-    // queue family info, we first need to get the indices of
-    // the physical device queue families.
-    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
-    
-    let mut unique_indices = HashSet::new();
-    unique_indices.insert(indices.graphics);
-    unique_indices.insert(indices.present);
+unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
+    // The graphics pipeline is the sequence of operations that
+    // take the vertices and textures of the meshes all the way
+    // to the pixels on the screen. It consists of the following
+    // (simplified) stages:
+    //
+    //  1) Input assembler: the vertices are collected into a
+    //     structure; repetition may be avoided with the use of
+    //     index buffers.
+    //  2) Vertex shader: each vertex is applied some
+    //     transformation, tipically from model space to screen
+    //     space, and per-vertex data is passed down the
+    //     pipeline.
+    //  3) Tesselation shader: geometry may be subdivided based
+    //     on certain rules, to add detail to the mesh (for
+    //     example when it is close to the camera).
+    //  4) Geometry shader: each primitive (triangle, line,
+    //     point) can be discarded or output even more
+    //     primitives. This is more flexible than the
+    //     tesselation shader, but not much used in practice
+    //     because it is less performant on most modern cards.
+    //  5) Rasterization: the primitives are discretized into
+    //     fragments, an abstraction of a pixel. Any fragments
+    //     that fall outside of the screen are discarded, and
+    //     the vertex shader attributes are interpolated across
+    //     the fragments. Fragments that are behind other
+    //     primitive fragments are discarded as well in the
+    //     early depth test stage, which takes place just before
+    //     the fragment shader.
+    //  6) Fragment shader: each fragment is written to a
+    //     framebuffer with a color and depth values. This may
+    //     be done using interpolated data from the vertex
+    //     shader stage, like texture coordinates and surface
+    //     normals.
+    //  7) Color blending: fragments that map to the same pixel
+    //     are mixed together as defined by the blending
+    //     operation (overwrite, add, transparency mix, etc).
+    //
+    // The input assembler, rasterization and color blending
+    // stages are known as "fixed-function" stages, because they
+    // are not programmable by the user, only configured. The
+    // other stages are all user-programmable, and may be
+    // skipped if not needed.
 
-    // We can then build the queue families info struct. For
-    // each supported queue family in our device, we are
-    // providing its index on the device to Vulkan and building
-    // the set of associated queues with their priorities (that
-    // is, a number between 0.0 and 1.0 which influences the
-    // scheduling of command buffers execution); since we only
-    // want one queue per family, but are still required to
-    // provide the priorities, we simply input the array [1.0].
-    let priorities = &[1.0];
-    let queues = unique_indices
-        .iter()
-        .map(|&index| {
-            vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(index)
-                .queue_priorities(priorities)
-                .build()
-        })
-        .collect::<Vec<_>>();
+    // We will start by including the shader bytecode, compiled
+    // from GLSL to SPIR-V with the compiler provided by the
+    // Vulkan SDK, directly into the engine executable:
+    let vert = include_bytes!("../shaders/shader.vert.spv");
+    let frag = include_bytes!("../shaders/shader.frag.spv");
 
-    // The next piece of information for the logical devices are
-    // layers and extensions. Previous implementations of Vulkan
-    // made a distinction between instance and device specific
-    // validation layers, but this is no longer the case.
-    // However, it is still a good idea to set them anyway to be
-    // compatible with older implementations.
-    let layers = if VALIDATION_ENABLED {
-        vec![VALIDATION_LAYER.as_ptr()]
-    } else {
-        vec![]
-    };
+    // To use the shader, we have to create a "shader module", a
+    // wrapper object around the shader bytecode.
+    let vert_module = create_shader_module(device, &vert[..])?;
+    let frag_module = create_shader_module(device, &frag[..])?;
 
-    // Then we add the required extensions.
-    let mut extensions = REQUIRED_EXTENSIONS
-        .iter()
-        .map(|e| e.as_ptr())
-        .collect::<Vec<_>>();
+    // Then we can define the first of the pipeline stages, the
+    // vertex shader stage. Other than the stage name and the
+    // shader bytecode, we also need to specify the entry point
+    // of the shader program to build the stage (incidentally,
+    // this means that we could write the code for different
+    // stages in the same file, using different entry point
+    // names). There is another, optional member,
+    // 'specialization_info', which allows specifying shader
+    // constants at build time, rather than at render time.
+    let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::VERTEX)
+        .module(vert_module)
+        .name(b"main\0");
 
-    // Some implementations are not fully conformant, so certain
-    // Vulkan extensions need to be enabled to ensure
-    // portability.
-    if cfg!(target_os = "macos") && entry.version()? >= PORTABILITY_MACOS_VERSION {
-        extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
-    }
+    let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::FRAGMENT)
+        .module(frag_module)
+        .name(b"main\0");
 
-    // We can then specify the set of device features we are
-    // going to use. Nothing special for now.
-    let features = vk::PhysicalDeviceFeatures::builder();
+    device.destroy_shader_module(vert_module, None);
+    device.destroy_shader_module(frag_module, None);
 
-    // The device info struct combines all the information we
-    // have gathered so far.
-    let info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(&queues)
-        .enabled_layer_names(&layers)
-        .enabled_extension_names(&extensions)
-        .enabled_features(&features);
-
-    // Finally, we can create the device, and set our app handles
-    // for the graphics and presentation queues.
-    let device = instance.create_device(data.physical_device, &info, None)?;
-    
-    data.graphics_queue = device.get_device_queue(indices.graphics, 0);
-    data.present_queue = device.get_device_queue(indices.present, 0);
-
-    info!("Created the logical device.");
-    Ok(device)
+    Ok(())
 }
 
 extern "system" fn debug_callback(

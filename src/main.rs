@@ -2,6 +2,7 @@ mod app;
 mod queues;
 mod devices;
 mod swapchain;
+mod shaders;
 
 use winit::{
     event::{Event, WindowEvent},

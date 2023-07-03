@@ -208,7 +208,7 @@ pub unsafe fn create_swapchain_image_views(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    info!("Created the swapchain image views.");
+    info!("Swapchain image views created.");
     Ok(())
 }
 
@@ -309,6 +309,6 @@ instance: &Instance,
     data.swapchain_format = surface_format.format;
     data.swapchain_extent = extent;
 
-    info!("Created the swapchain.");
+    info!("Swapchain created.");
     Ok(())
 }
