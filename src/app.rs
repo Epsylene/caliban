@@ -257,7 +257,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // to the pixels on the screen. It consists of the following
     // (simplified) stages:
     //
-    //  1) Input assembler: the vertices are collected into a
+    //  1) Input assembly: the vertices are collected into a
     //     structure; repetition may be avoided with the use of
     //     index buffers.
     //  2) Vertex shader: each vertex is applied some
@@ -295,31 +295,159 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // other stages are all user-programmable, and may be
     // skipped if not needed.
 
-    // We will start by including the shader bytecode, compiled
-    // from GLSL to SPIR-V with the compiler provided by the
-    // Vulkan SDK, directly into the engine executable:
+    // Before the first stage, input assembly, we have to define
+    // vertex input state -- the format of the vertex data that
+    // will be passed to the vertex shader. There are two main
+    // things to consider:
+    //  - Bindings: the spacing between data and whether the
+    //    data is per-vertex or per-instance;
+    //  - Attributes: the type of the vertex attributes (color,
+    //    position, normal, etc), which binding to load them
+    //    from and at which offset.
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+
+    // The input assembly info struct describes the kind of
+    // geometry that will be drawn from the vertices and if
+    // primitive restart should be enabled. Some of the possible
+    // topology values are POINT_LIST (points from vertices),
+    // LINE_LIST (disjoint lines from each pair of vertices,
+    // without reuse), LINE_STRIP (continuous chain of lines
+    // between the first and last indexed vertices),
+    // TRIANGLE_LIST (disjoint triangle from every triplet of
+    // vertices, without reuse), TRIANGLE_STRIP (triangle paving
+    // of the surface of vertices) and TRIANGLE_FAN (triangle
+    // paving centered around the first indexed vertex).
+    // Enabling primitive restart allows to break up lines and
+    // triangles in the LINE_STRIP and TRIANGLE_STRIP modes by
+    // using a special index (either 0xFFFF or 0xFFFFFFFF
+    // depending on the index size).
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false);
+
+    // Then comes the vertex shader stage. We will start by
+    // including the shader bytecode, compiled from GLSL to
+    // SPIR-V with the compiler provided by the Vulkan SDK,
+    // directly into the engine executable, and create a "shader
+    // module", a wrapper object passed to Vulkan and containing
+    // the shader bytecode.
     let vert = include_bytes!("../shaders/shader.vert.spv");
-    let frag = include_bytes!("../shaders/shader.frag.spv");
-
-    // To use the shader, we have to create a "shader module", a
-    // wrapper object around the shader bytecode.
     let vert_module = create_shader_module(device, &vert[..])?;
-    let frag_module = create_shader_module(device, &frag[..])?;
 
-    // Then we can define the first of the pipeline stages, the
-    // vertex shader stage. Other than the stage name and the
-    // shader bytecode, we also need to specify the entry point
-    // of the shader program to build the stage (incidentally,
-    // this means that we could write the code for different
-    // stages in the same file, using different entry point
-    // names). There is another, optional member,
-    // 'specialization_info', which allows specifying shader
-    // constants at build time, rather than at render time.
+    // Other than the stage name and the shader bytecode, we
+    // also need to specify the entry point of the shader
+    // program to build the stage (incidentally, this means that
+    // we could write the code for different stages in the same
+    // file, using different entry point names). There is
+    // another, optional member, 'specialization_info', which
+    // allows specifying shader constants at build time, rather
+    // than at render time.
     let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
         .module(vert_module)
         .name(b"main\0");
 
+    // The next step involves configuring the viewport, which is
+    // the region of the framebuffer that the output will be
+    // rendered to. It is defined by a rectangle from (x, y) to
+    // (x + width, y + height). Furthermore, the range of depth
+    // values to use for the framebuffer can be specified with
+    // min and max values between 0 and 1.
+    let viewport = vk::Viewport::builder()
+        .x(0.0)
+        .y(0.0)
+        .width(data.swapchain_extent.width as f32)
+        .height(data.swapchain_extent.height as f32)
+        .min_depth(0.0)
+        .max_depth(1.0);
+
+    // The viewport defines the transformation from the image to
+    // the framebuffer, but the actual pixel region to store in
+    // the framebuffer is defined by the scissor rectangle (for
+    // example, one could define a viewport surface on the whole
+    // whole window, but a scissor rectangle on half of the
+    // image, such that the other half is rendered as white
+    // pixels).
+    let scissor = vk::Rect2D::builder()
+        .offset(vk::Offset2D::default())
+        .extent(data.swapchain_extent);
+
+    // The viewport and scissor rectangle are then combined into
+    // a viewport state struct, which is passed to the pipeline.
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+        .viewports(&[viewport.build()])
+        .scissors(&[scissor.build()]);
+
+    // The next stage, the rasterizer, takes the geometry shaped
+    // by the vertex shader and turns it into fragments to be
+    // colored by the fragment shader, while performing some
+    // tests like depth testing (comparing the value of a
+    // generated fragment with the value stored in the depth
+    // buffer, and replacing it if the new value is closer),
+    // face culling (test if the fragment is in a front- or
+    // back-facing polygon) and the scissors test (discarding
+    // fragments outside of the scissor rectangle). Several
+    // other options can be configured:
+    //  - Depth clamp: fragments beyond the near and far planes
+    //    are clamped rather than discarded;
+    //  - Rasterizer discard: all geometry is discarded before
+    //    the rasterization stage, which effectively disables
+    //    it. This can be useful when doing non-graphical or
+    //    pre-rendering tasks that need the work from the vertex
+    //    and tesselation stages.
+    //  - Polygon mode: how fragments are generated for
+    //    geometry, either in FILL (fill the area of the
+    //    polygon), LINE (draw the edges of the polygon) or
+    //    POINT (draw the polygon vertices) mode.
+    //  - Line width: the thickness of the line in terms of
+    //    number of fragments.
+    //  - Cull mode: which faces to cull, either FRONT, BACK,
+    //    NONE or FRONT_AND_BACK.
+    //  - Front face: how to determine the front-facing faces,
+    //    either the CLOCKWISE or COUNTER_CLOCKWISE oriented
+    //    ones.
+    //  - Depth bias: the depth value of a fragment can be
+    //    offset by some value (the bias), to avoid z-fighting
+    //    when polygons are coplanar. This offset can be
+    //    constant or based on the slope of the polygon (which
+    //    can be useful when using it to reduce shadow acne, the
+    //    erroneous shadows appearing on a model when applying a
+    //    shadow map because the faces self-intersect; faces are
+    //    more likely to self-shadow if they are facing the
+    //    light, which is why slope-scaled depth bias is
+    //    useful).
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_clamp_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .cull_mode(vk::CullModeFlags::BACK)
+        .front_face(vk::FrontFace::CLOCKWISE)
+        .depth_bias_enable(false);
+
+    // Multisampling can then be configured to perform
+    // antialiasing. In ordinary rendering, the pixel color is
+    // based on a single sample point; if the polygon edge
+    // passes through the pixel but is not close enough to the
+    // sample point, the pixel will be left blank, leading to a
+    // jagged "staircase" effect. Multisample antialiasing
+    // (MSAA), however, takes multiple samples per pixel and
+    // averages them to determine the final pixel color,
+    // producing a smoother result. Sample shading, which
+    // applies the multisampling to every fragment in the
+    // polygon (not only at the edges), may be used too; this
+    // can be useful when there is a low-res texture with high
+    // contrasting colors, that won't be antialised with normal
+    // MSAA. We will not be using antialiasing for now, so we
+    // will disable sample shading and set the number of samples
+    // to 1.
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::_1);
+
+    let frag = include_bytes!("../shaders/shader.vert.spv");
+    let frag_module = create_shader_module(device, &frag[..])?;
+    
     let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::FRAGMENT)
         .module(frag_module)
