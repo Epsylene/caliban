@@ -46,6 +46,8 @@ pub struct AppData {
     //   images
     // - Swapchain image views: views of the swapchain images,
     //   which describe how they should be accessed
+    // - Pipeline layout: the set of ressources that can be
+    //   accessed by the pipeline
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -56,6 +58,7 @@ pub struct AppData {
     pub swapchain_format: vk::Format,
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_image_views: Vec<vk::ImageView>,
+    pub pipeline_layout: vk::PipelineLayout,
 }
 
 pub struct App {
@@ -125,6 +128,7 @@ impl App {
             self.device.destroy_image_view(view, None);
         });
 
+        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
         
@@ -375,8 +379,8 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // The viewport and scissor rectangle are then combined into
     // a viewport state struct, which is passed to the pipeline.
     let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-        .viewports(&[viewport.build()])
-        .scissors(&[scissor.build()]);
+        .viewports(&[viewport])
+        .scissors(&[scissor]);
 
     // The next stage, the rasterizer, takes the geometry shaped
     // by the vertex shader and turns it into fragments to be
@@ -445,6 +449,10 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .sample_shading_enable(false)
         .rasterization_samples(vk::SampleCountFlags::_1);
 
+    // After rasterization comes the fragment shader. As with
+    // the vertex shader, we will include the shader bytecode
+    // directly into the executable, create a shader module, and
+    // set up the fragment stage.
     let frag = include_bytes!("../shaders/shader.vert.spv");
     let frag_module = create_shader_module(device, &frag[..])?;
     
@@ -453,9 +461,73 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
         .module(frag_module)
         .name(b"main\0");
 
+    // The final stage is color blending. Since there is already
+    // a color in the framebuffer (from the previous frame), we
+    // need to choose how to combine it with the new color
+    // returned by the fragment shader. This is what we call
+    // color blending, which is performed in several steps:
+    //  1) Multiply the "source" (new) and "destination" (old)
+    //     colors by a factor, differentiating between the RGB
+    //     and alpha components. This is called the "blend
+    //     factor" and is set to a value between 0 and 1 (giving
+    //     1 to the source color and 0 to the destination color
+    //     replaces the old color with the new one, for
+    //     example);
+    //  2) Mixing the source and destination colors with a
+    //     blending operation, which can be ADD (add the two
+    //     colors), SUBTRACT (subtract the source from the
+    //     destination), REVERSE_SUBTRACT, MIN/MAX (take the
+    //     minimum/maximum of the two colors), etc. The RGB and
+    //     alpha components can again be mixed separately.
+    //  3) Applying a mask (the "color write mask") to the final
+    //     color, which can be used to disable writing to the
+    //     framebuffer for certain components (for example, if
+    //     we only want to write to the red and blue channels).
+    // The most common way to use color blending is to implement
+    // alpha blending, which is used to simulate transparency by
+    // mixing the source and destination colors based on its
+    // opacity, with a linear blend alpha*new + (1 - alpha)*old.
+    let attachment = vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::all())
+        .blend_enable(false);
+    
+    // The color blend attachment struct is then attached to the
+    // color blend struct; there can be several color blend
+    // attachements, one for each framebuffer. The color blend
+    // state struct allows a second method of blending by
+    // bitwise combination of the color components with the
+    // provided operator (COPY, AND, OR, CLEAR, etc); this will
+    // automatically disable the first method. It also allows to
+    // set the "blend constants", a RGBA vector used in some
+    // blend factors (like BLEND_FACTOR_CONSTANT_COLOR or
+    // BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA).
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+        .logic_op_enable(false)
+        .attachments(&[attachment]);
+
+    // A limited amount of the state previously specified can be
+    // changed at runtime without recreating the pipeline, like
+    // the viewport size, the line width or blend constants.
+    // This will ignore the configuration of these values and
+    // require to specify them at drawing time.
+    let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
+        .dynamic_states(&[
+            vk::DynamicState::VIEWPORT,
+            vk::DynamicState::SCISSOR,
+        ]);
+
+    // The ressources that can be accessed by the pipeline, like
+    // uniforms (global data shared across shaders) or push
+    // constants (small bunches of data sent to a shader), are
+    // described with a pipeline layout object; ours will be
+    // empty for now.
+    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+    data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
+
     device.destroy_shader_module(vert_module, None);
     device.destroy_shader_module(frag_module, None);
 
+    info!("Pipeline created.");
     Ok(())
 }
 
