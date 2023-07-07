@@ -11,7 +11,7 @@ use vulkanalia::{
     window as vk_window,
     loader::{LibloadingLoader, LIBRARY},
     Version,
-    vk::ExtDebugUtilsExtension,
+    vk::{ExtDebugUtilsExtension, AmigoProfilingSubmitInfoSEC},
     vk::KhrSurfaceExtension,
     vk::KhrSwapchainExtension,
 };
@@ -46,8 +46,12 @@ pub struct AppData {
     //   images
     // - Swapchain image views: views of the swapchain images,
     //   which describe how they should be accessed
+    // - Render pass: the render pass describing the different
+    //   framebuffer attachments and their usage
     // - Pipeline layout: the set of ressources that can be
     //   accessed by the pipeline
+    // - Pipeline: the graphics pipeline, the succession of
+    //   rendering stages in a single pass
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -58,7 +62,9 @@ pub struct AppData {
     pub swapchain_format: vk::Format,
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_image_views: Vec<vk::ImageView>,
+    pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
+    pub pipeline: vk::Pipeline,
 }
 
 pub struct App {
@@ -109,10 +115,14 @@ impl App {
         create_swapchain(window, &instance, &device, &mut data)?;
         create_swapchain_image_views(&device, &mut data)?;
 
-        // Then enter the graphics pipeline (the succession of
-        // shader stages that go from taking a bunch of vertices
-        // to presenting a properly shaded set of pixels to the
-        // screen):
+        // Then enter the graphics pipeline, the succession of
+        // rendering stages that go from taking a bunch of
+        // vertices to presenting a properly shaded set of
+        // pixels to the screen. Before that, however, we need
+        // to tell Vulkan about the framebuffer attachments that
+        // will be used while rendering: the object containing
+        // this information is called a "render pass".
+        create_render_pass(&instance, &device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
         Ok(Self { entry, instance, data, device })
@@ -129,6 +139,8 @@ impl App {
         });
 
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
+        self.device.destroy_pipeline(self.data.pipeline, None);
+        self.device.destroy_render_pass(self.data.render_pass, None);
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
         
@@ -255,6 +267,105 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     Ok(instance)
 }
 
+unsafe fn create_render_pass(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // During rendering, the framebuffer will access different
+    // attachments, like the color buffer or the depth buffer.
+    // The render pass object specifies how these render targets
+    // are configured, how many of them there are, how their
+    // contents should be handled, etc.
+    //
+    // We will start by configuring the color buffer attachment,
+    // represented by one of the images from the swapchain.
+    // Apart from the image format, which should be the same
+    // than the swapchain, and the number of fragment samples
+    // (see multisampling in the pipeline creation), we also
+    // need to specify:
+    // - The loading and storing of data in the attachment at
+    //   the beginning and end of the render pass. The loading
+    //   can be either LOAD (preserve the existing data), CLEAR
+    //   (clear the values to a constant) or DONT_CARE (existing
+    //   contents undefined, we don't care about them). The
+    //   storing can be either STORE (rendered contents are
+    //   stored in memory so that they can be read later) or
+    //   DONT_CARE (contents of the framebuffer will be
+    //   undefined after the render pass);
+    // - Stencil load and store operations: we won't be using
+    //   the stencil buffer, so we can set these to DONT_CARE;
+    // - The initial and final layout of the attachment:
+    //   textures and framebuffers are images with a certain
+    //   pixel format, whose layout can be changed depending on
+    //   the current rendering operation. Some common layouts
+    //   are COLOR_ATTACHMENT_OPTIMAL (optimized for images used
+    //   as color attachments, before actual rendering),
+    //   PRESENT_SRC_KHR (images to be presented in the
+    //   swapchain) and TRANSFER_DST_OPTIMAL (destination for a
+    //   memory copy operation). The UNDEFINED layout means that
+    //   we don't care about the previous layout of the image,
+    //   which is the case for the initial layout. We want the
+    //   image to be ready for presentation at the end of the
+    //   render pass, so we set the final layout to
+    //   PRESENT_SRC_KHR.
+    let color_attachment = vk::AttachmentDescription::builder()
+        .format(data.swapchain_format)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+    // Render passes consist of multiple subpasses, subsequent
+    // rendering operations that depend on the contents of
+    // framebuffers in previous passes (for example a sequence
+    // of post-processing effects that are applied one after
+    // another). Dividing a render pass into subpasses allows
+    // Vulkan to reorder the operations and conserve memory
+    // bandwith for possibly better performance. Each subpass
+    // references one or more attachments, through
+    // AttachmentReference structs, which specify the index of
+    // the attachment in the render pass (referenced in the
+    // fragment shader with the "layout(location = 0)"
+    // directive) and the layout of the attachment. Since our
+    // render pass consists of a single subpass on a color
+    // buffer attachment, the index is 0 and the layout is
+    // COLOR_ATTACHMENT_OPTIMAL.
+    let color_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    
+    // The subpass is explicitly stated to be a graphics subpass
+    // (as opposed to a compute subpass, for example), and the
+    // array of color attachments is passed to it. There can
+    // also be input attachments (attachments read from a
+    // shader), resolve attachments (used for multisampling
+    // color attachments), depth stencil attachments (for depth
+    // and stencil data) and preserve attachments (attachments
+    // which are not used by the subpass, but must be preserved
+    // for later use).
+    let color_attachments = &[color_attachment_ref];
+    let subpass = vk::SubpassDescription::builder()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(color_attachments);
+    
+    // The render pass info struct can then finally be created,
+    // containing both the attachments and the subpasses.
+    let color_attachments = &[color_attachment];
+    let subpasses = &[subpass];
+    let info = vk::RenderPassCreateInfo::builder()
+        .attachments(color_attachments)
+        .subpasses(subpasses);
+
+    data.render_pass = device.create_render_pass(&info, None)?;
+
+    info!("Render pass created.");
+    Ok(())
+}
+
 unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // The graphics pipeline is the sequence of operations that
     // take the vertices and textures of the meshes all the way
@@ -369,18 +480,19 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // the framebuffer, but the actual pixel region to store in
     // the framebuffer is defined by the scissor rectangle (for
     // example, one could define a viewport surface on the whole
-    // whole window, but a scissor rectangle on half of the
-    // image, such that the other half is rendered as white
-    // pixels).
+    // window, but a scissor rectangle on half of the image,
+    // such that the other half is rendered as white pixels).
     let scissor = vk::Rect2D::builder()
         .offset(vk::Offset2D::default())
         .extent(data.swapchain_extent);
 
     // The viewport and scissor rectangle are then combined into
     // a viewport state struct, which is passed to the pipeline.
+    let viewports = &[viewport];
+    let scissors = &[scissor];
     let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-        .viewports(&[viewport])
-        .scissors(&[scissor]);
+        .viewports(viewports)
+        .scissors(scissors);
 
     // The next stage, the rasterizer, takes the geometry shaped
     // by the vertex shader and turns it into fragments to be
@@ -453,7 +565,7 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // the vertex shader, we will include the shader bytecode
     // directly into the executable, create a shader module, and
     // set up the fragment stage.
-    let frag = include_bytes!("../shaders/shader.vert.spv");
+    let frag = include_bytes!("../shaders/shader.frag.spv");
     let frag_module = create_shader_module(device, &frag[..])?;
     
     let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
@@ -495,15 +607,16 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // color blend struct; there can be several color blend
     // attachements, one for each framebuffer. The color blend
     // state struct allows a second method of blending by
-    // bitwise combination of the color components with the
-    // provided operator (COPY, AND, OR, CLEAR, etc); this will
-    // automatically disable the first method. It also allows to
-    // set the "blend constants", a RGBA vector used in some
-    // blend factors (like BLEND_FACTOR_CONSTANT_COLOR or
-    // BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA).
+    // performing a bitwise combination of the color components
+    // with the provided operator (COPY, AND, OR, CLEAR, etc);
+    // this will automatically disable the first method. It also
+    // allows to set the "blend constants", a RGBA vector used
+    // in some blend factors (like BLEND_FACTOR_CONSTANT_COLOR
+    // or BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA).
+    let attachments = &[attachment];
     let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
         .logic_op_enable(false)
-        .attachments(&[attachment]);
+        .attachments(attachments);
 
     // A limited amount of the state previously specified can be
     // changed at runtime without recreating the pipeline, like
@@ -523,6 +636,49 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // empty for now.
     let layout_info = vk::PipelineLayoutCreateInfo::builder();
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
+
+    // We can now combine all of the structures and objects
+    // above to create the actual graphics pipeline. It is
+    // comprised of shader stages (the shader modules that
+    // define the functionality of the programmable stages of
+    // the pipeline), fixed-function state (the structures that
+    // define the fixed-function stages of the pipeline),
+    // pipeline layout (the uniform and push values referenced
+    // by the shader that can be updated at runtime) and render
+    // pass (the attachments referenced by the pipeline stages
+    // and their usage). We finally pass the index of the
+    // subpass where this pipeline will be used.
+    //
+    // There are two more parameters left, the "base pipeline
+    // handle" and "base pipeline index". These are used when
+    // deriving a pipeline from an existing one, which can be
+    // less expensive when they have a lot of functionality in
+    // common; switching between pipelines from the same parent
+    // is also faster. We won't be referencing another pipeline
+    // for now, so we specify a null handle and an invalid
+    // index.
+    let stages = &[vert_stage, frag_stage];
+    let info = vk::GraphicsPipelineCreateInfo::builder()
+        .stages(stages)
+        .vertex_input_state(&vertex_input_state)
+        .input_assembly_state(&input_assembly_state)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&color_blend_state)
+        .dynamic_state(&dynamic_state)
+        .layout(data.pipeline_layout)
+        .render_pass(data.render_pass)
+        .subpass(0)
+        .base_pipeline_handle(vk::Pipeline::null())
+        .base_pipeline_index(-1);
+
+    // The pipeline creation function takes an array of pipeline
+    // info structs and creates multiple pipeline objects in a
+    // single call. The first parameter, the pipeline cache, is
+    // used to store and reuse the results of pipeline creation
+    // calls, which can speed up the whole process.
+    data.pipeline = device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?.0[0];
 
     device.destroy_shader_module(vert_module, None);
     device.destroy_shader_module(frag_module, None);
