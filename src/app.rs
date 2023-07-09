@@ -11,7 +11,7 @@ use vulkanalia::{
     window as vk_window,
     loader::{LibloadingLoader, LIBRARY},
     Version,
-    vk::{ExtDebugUtilsExtension, AmigoProfilingSubmitInfoSEC},
+    vk::ExtDebugUtilsExtension,
     vk::KhrSurfaceExtension,
     vk::KhrSwapchainExtension,
 };
@@ -52,6 +52,8 @@ pub struct AppData {
     //   accessed by the pipeline
     // - Pipeline: the graphics pipeline, the succession of
     //   rendering stages in a single pass
+    // - Framebuffer: collection of memory attachments used by a
+    //   render pass instance
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -65,6 +67,7 @@ pub struct AppData {
     pub render_pass: vk::RenderPass,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
+    pub framebuffers: Vec<vk::Framebuffer>,
 }
 
 pub struct App {
@@ -125,6 +128,11 @@ impl App {
         create_render_pass(&instance, &device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
+        // The final step before actual rendering is to create
+        // the framebuffers, which we use to bind the
+        // attachments specified during render pass creation.
+        create_framebuffers(&device, &mut data)?;
+
         Ok(Self { entry, instance, data, device })
     }
 
@@ -134,6 +142,10 @@ impl App {
     }
 
     pub unsafe fn destroy(&mut self) {
+        self.data.framebuffers
+            .iter()
+            .for_each(|&f| self.device.destroy_framebuffer(f, None));
+
         self.data.swapchain_image_views.iter().for_each(|&view| {
             self.device.destroy_image_view(view, None);
         });
@@ -684,6 +696,47 @@ unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     device.destroy_shader_module(frag_module, None);
 
     info!("Pipeline created.");
+    Ok(())
+}
+
+unsafe fn create_framebuffers(
+    device: &Device, 
+    data: &mut AppData
+) -> Result<()> {
+    // Each GPU frame can have a number of attachments
+    // associated to it, like color, depth, etc. The render pass
+    // describes the nature of these attachments, but the object
+    // used to actually bind them to an image is the
+    // framebuffer. In other words, a framebuffer provides the
+    // attachments that a render pass needs while rendering.
+    // Attachments can be shared between framebuffers: for
+    // example, two framebuffers could have two different color
+    // buffer attachments (representing two different swapchain
+    // frames) but only one depth buffer (which does not need to
+    // be recreated for each frame).
+    data.framebuffers = data
+        .swapchain_image_views
+        .iter()
+        .map(|i| {
+            // We only have one attachment per framebuffer for
+            // now, because we are only rendering to the color
+            // attachment. However, since we need to be able to
+            // write to each image independently (because we
+            // don't know in advance which frame will be
+            // presented at a time), we have to create one
+            // framebuffer for each image in the swapchain.
+            let images = &[*i];
+            let create_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(data.render_pass)
+                .attachments(images)
+                .width(data.swapchain_extent.width)
+                .height(data.swapchain_extent.height)
+                .layers(1);
+
+            device.create_framebuffer(&create_info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(())
 }
 

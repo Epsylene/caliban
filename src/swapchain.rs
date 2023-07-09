@@ -245,8 +245,8 @@ instance: &Instance,
     //   time, and ownership must be explicitly transfered. This
     //   option offers the best performance.
     // - CONCURRENT: images can be used across multiple queue
-    //   families. 
-    // 
+    //   families.
+    //
     // We will use the concurrent mode if the graphics and
     // presentation families are different to keep things simple,
     // but on most hardware those two are the same.
