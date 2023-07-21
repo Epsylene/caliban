@@ -1,7 +1,7 @@
 use crate::{
     devices::*,
     shaders::*,
-    swapchain::*,
+    swapchain::*, queues::QueueFamilyIndices,
 };
 use std::collections::HashSet;
 
@@ -54,6 +54,10 @@ pub struct AppData {
     //   rendering stages in a single pass
     // - Framebuffer: collection of memory attachments used by a
     //   render pass instance
+    // - Command buffers: buffers containing commands which can
+    //   be submitted to a queue for execution
+    // - Command pool: memory allocator for a set of command
+    //   buffers
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -68,6 +72,8 @@ pub struct AppData {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
+    pub command_buffers: Vec<vk::CommandBuffer>,
+    pub command_pool: vk::CommandPool,
 }
 
 pub struct App {
@@ -130,8 +136,12 @@ impl App {
 
         // The final step before actual rendering is to create
         // the framebuffers, which we use to bind the
-        // attachments specified during render pass creation.
+        // attachments specified during render pass creation,
+        // and the command buffers (allocated in a command
+        // pool), to record them and submit them to the GPU.
         create_framebuffers(&device, &mut data)?;
+        create_command_pool(&instance, &device, &mut data)?;
+        create_command_buffers(&device, &mut data)?;
 
         Ok(Self { entry, instance, data, device })
     }
@@ -157,6 +167,7 @@ impl App {
         self.device.destroy_device(None);
         
         self.instance.destroy_surface_khr(self.data.surface, None);
+        self.device.destroy_command_pool(self.data.command_pool, None);
         
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
@@ -736,6 +747,154 @@ unsafe fn create_framebuffers(
             device.create_framebuffer(&create_info, None)
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
+unsafe fn create_command_pool(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // Commands in Vulkan, like drawing operations and memory
+    // transfers, are not executed directly, but recorded in a
+    // command buffer and then executed. Command buffers
+    // themselves are not allocated directly but within an
+    // opaque object called a "command pool", which manages the
+    // memory that is used to store the buffers and locks it to
+    // a singular thread. Command pool creation takes only two
+    // parameters:
+    //  - Pool flags, which can be either TRANSIENT (command
+    //    buffers that are rerecorded with new command very
+    //    often), RESET_COMMAND_BUFFER (allow command buffers to
+    //    be rerecorded individually rather than globally) and
+    //    PROTECTED (command buffers which are stored in
+    //    "protected memory", preventing unauthorized write or
+    //    access);
+    //  - Queue family index, which specifies the queue family
+    //    corresponding to the type of commands the command
+    //    buffers allocated in the pool will record.
+    let indices = QueueFamilyIndices::get(instance, data, data.physical_device)?;
+    let info = vk::CommandPoolCreateInfo::builder()
+        .flags(vk::CommandPoolCreateFlags::empty())
+        .queue_family_index(indices.graphics);
+
+    data.command_pool = device.create_command_pool(&info, None)?;
+
+    Ok(())
+}
+
+unsafe fn create_command_buffers(
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // Command buffers are allocated from a command pool, and
+    // then recorded with commands. All GPU commands have to go
+    // through command buffers, which are then submitted to a
+    // queue to be executed.
+    //
+    // The command buffers allocation takes three parameters:
+    //  - The command pool they are allocated on;
+    //  - The level of the buffers: this can be either PRIMARY
+    //    (command buffers that can be submitted directly to a
+    //    Vulkan queue to be executed) or SECONDARY (buffers
+    //    that are executed indirectly by being called from
+    //    primary command buffers and may not be submitted to
+    //    queues). Primary command buffers are the main command
+    //    buffers, tied to a single render pass and defining its
+    //    structure, as multiple primary command buffers may not
+    //    be executed within the same render pass instance.
+    //    Secondary command buffers, however, execute within a
+    //    specific subpass, which allows threading rendering
+    //    operations on a framebuffer;
+    //  - The number of command buffers to allocate: when a
+    //    command buffer is submitted for execution, it goes
+    //    into pending state, which means that it cannot be
+    //    reset, and thus that it cannot be re-recorded. This
+    //    means that a single command buffer for several
+    //    framebuffers would have to wait for the previous frame
+    //    to finish before working on the next one. To avoid
+    //    this, we will allocate one command buffer per
+    //    framebuffer.
+    let allocate_info = vk::CommandBufferAllocateInfo::builder()
+        .command_pool(data.command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(data.framebuffers.len() as u32);
+
+    data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
+
+    // Command buffers can then be started recording, specifying
+    // usage with some parameters:
+    //  - flags: either ONE_TIME_SUBMIT (the command buffer will
+    //    be rerecorded right after executing it once),
+    //    RENDER_PASS_CONTINUE (secondary command buffers that
+    //    are entirely within a single render pass) and
+    //    SIMULTANEOUS_USE (the command buffer can be
+    //    resubmitted while it is in the pending state);
+    //  - inheritance info: only used for secondary command
+    //    buffer, this specifies which state to inherit from the
+    //    calling primary command buffer.
+    for (i, &command_buffer) in data.command_buffers.iter().enumerate() {
+        let inheritance = vk::CommandBufferInheritanceInfo::builder();
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::empty())
+            .inheritance_info(&inheritance);
+
+        device.begin_command_buffer(command_buffer, &info)?;
+
+        // Now that the command buffer is recording, we can
+        // start the render pass, by specifying the render area
+        // (the swapchain extent, which is the size of the
+        // frame)...
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(data.swapchain_extent);
+
+        // ...the clear color (black)...
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        // ...and filling the info struct. The render pass can
+        // then begin with the corresponding command.
+        let clear_values = &[color_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(data.render_pass)
+            .framebuffer(data.framebuffers[i])
+            .render_area(render_area)
+            .clear_values(clear_values);
+
+        // The first parameter (the same for every "cmd_xx"
+        // function) is the command buffer we are recording the
+        // command to. The second specifies the render pass
+        // info, and the third controls how the drawing commands
+        // within the render pass will be provided:
+        //  - INLINE: the commands are embedded in the primary
+        //    command buffer, no secondary command buffer is
+        //    used;
+        //  - SECONDARY_COMMAND_BUFFERS: the commands will be
+        //    executed from secondary command buffers.
+        device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+    
+        // We can then bind the pipeline, specifying if it is a
+        // GRAPHICS or COMPUTE pipeline.
+        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
+
+        // And, finally, draw the triangle. Apart from the
+        // command buffer, we have to tell the number of
+        // vertices (3), the number of instances (1 in our case,
+        // where we are not doing instaced rendering), the first
+        // vertex index in the vertex buffer (0, no offset) and
+        // the first instance index (idem).
+        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+
+        // The render pass can then be ended, and the command
+        // buffer to stop recording.
+        device.cmd_end_render_pass(command_buffer);
+        device.end_command_buffer(command_buffer)?;
+    }
 
     Ok(())
 }
