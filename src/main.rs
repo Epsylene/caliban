@@ -3,6 +3,8 @@ mod queues;
 mod devices;
 mod swapchain;
 mod shaders;
+mod pipeline;
+mod buffers;
 
 use winit::{
     event::{Event, WindowEvent},
