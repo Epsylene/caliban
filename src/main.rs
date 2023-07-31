@@ -6,6 +6,7 @@ mod shaders;
 mod pipeline;
 mod buffers;
 
+use vulkanalia::vk::DeviceV1_0;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoop,
@@ -40,7 +41,16 @@ fn main() -> Result<()> {
             } => {
                 destroying = true;
                 control_flow.set_exit();
+
+                // Render operations are asynchronous, which
+                // means that we may call the destroy function
+                // before drawing and presentation are
+                // completed; to avoid this, we are waiting for
+                // the logical device to finish operations
+                // before destroying.
+                unsafe { app.device.device_wait_idle().unwrap(); }
                 unsafe { app.destroy(); }
+
                 info!("Destroyed the app.");
             },
             Event::MainEventsCleared if !destroying => {

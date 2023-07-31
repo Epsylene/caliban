@@ -59,6 +59,8 @@ pub struct AppData {
     //   be submitted to a queue for execution
     // - Command pool: memory allocator for a set of command
     //   buffers
+    // - Semaphores: synchronization primitive to insert a
+    //   dependency within or accross command queue operations
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -75,13 +77,15 @@ pub struct AppData {
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub command_pool: vk::CommandPool,
+    pub image_available_semaphore: vk::Semaphore,
+    pub render_finished_semaphore: vk::Semaphore,
 }
 
 pub struct App {
     entry: Entry,
     instance: Instance,
     data: AppData,
-    device: Device,
+    pub device: Device,
 }
 
 impl App {
@@ -144,31 +148,108 @@ impl App {
         create_command_pool(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
+        // 
+        create_sync_objects(&device, &mut data)?;
+
         Ok(Self { entry, instance, data, device })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
-        // Render the app here
+        // The first step in rendering The Triangle (TM) is to
+        // acquire an image on the swapchain. The "acquire next
+        // image" method takes in the swapchain from which to
+        // acquire the image, a timeout value specifying how
+        // long the function is to wait if no image is available
+        // (in nanoseconds), a semaphore and/or a fence to
+        // signal when the image is acquired, and returns the
+        // index of the next available presentable image in the
+        // swapchain.
+        let image_index = self
+            .device
+            .acquire_next_image_khr(
+                self.data.swapchain,
+                u64::MAX,
+                self.data.image_available_semaphore,
+                vk::Fence::null()
+            )?
+            .0 as usize;
+
+        // The queue submit operation is then configured with a
+        // submit info struct, containing:
+        //  - wait_semaphores: an array of semaphores upon which
+        //    to wait before execution begins (here the "image
+        //    available" semaphore);
+        //  - wait_dst_stage_mask: an array of pipeline stages
+        //    at which each corresponding semaphore wait will
+        //    occur (here the color attachment output stage,
+        //    after blending, when the final color values are
+        //    output from the pipeline, since we want to wait
+        //    writing colors to the image until it is truly
+        //    available);
+        //  - command_buffers: the command buffer handles to
+        //    execute in the batch (here the command buffer at
+        //    the index of the acquired image);
+        //  - signal_semaphores: array of semaphores that will
+        //    be signaled when the command buffers have
+        //    completed execution (the "render finished"
+        //    semaphore).
+        let image_available = &[self.data.image_available_semaphore];
+        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = &[self.data.command_buffers[image_index]];
+        let render_finished = &[self.data.render_finished_semaphore];
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(image_available)
+            .wait_dst_stage_mask(wait_stages)
+            .command_buffers(command_buffers)
+            .signal_semaphores(render_finished);
+
+        // Lastly, the queue and its info can be submitted, with
+        // an optional fence that will be signaled when the
+        // workload is much larger.
+        self.device.queue_submit(self.data.graphics_queue, &[submit_info], vk::Fence::null())?;
+
+        // The final step of drawing a frame is submitting the
+        // result back to the swapchain to have it eventually
+        // show up on the screen. Presentation is configured
+        // with an info struct detailing:
+        //  - wait_semaphores: the semaphores on which to wait
+        //    before presentation can happen, which are the
+        //    "render finished" semaphores from before;
+        //  - swapchains: the swapchains to present images to;
+        //  - image_indices: the index of the image to present
+        //    for each swapchain.
+        let swapchains = &[self.data.swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(render_finished)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        self.device.queue_present_khr(self.data.present_queue, &present_info)?;
+
         Ok(())
     }
 
     pub unsafe fn destroy(&mut self) {
+        self.device.destroy_semaphore(self.data.render_finished_semaphore, None);
+        self.device.destroy_semaphore(self.data.image_available_semaphore, None);
+        self.device.destroy_command_pool(self.data.command_pool, None);
+
         self.data.framebuffers
             .iter()
             .for_each(|&f| self.device.destroy_framebuffer(f, None));
 
-        self.data.swapchain_image_views.iter().for_each(|&view| {
-            self.device.destroy_image_view(view, None);
-        });
-
-        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_pipeline(self.data.pipeline, None);
+        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
+        
+        self.data.swapchain_image_views
+            .iter()
+            .for_each(|&view| self.device.destroy_image_view(view, None));
+        
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
         self.device.destroy_device(None);
-        
         self.instance.destroy_surface_khr(self.data.surface, None);
-        self.device.destroy_command_pool(self.data.command_pool, None);
         
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
@@ -288,6 +369,31 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 
     info!("Vulkan instance created.");
     Ok(instance)
+}
+
+unsafe fn create_sync_objects(
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // Rendering operations, such as acquiring images,
+    // presenting images or running a command buffer are
+    // executed asynchronously. This means that the order of
+    // execution is undefined, which poses a problem because
+    // each operation depends on the completion of the previous
+    // one. To solve this, Vulkan provides two ways of
+    // synchronizing swapchain events: fences and semaphores.
+    // Semaphores are simply signal identifiers that indicate
+    // when a batch of commands has been processed. In our case,
+    // we will need one semaphore to signal that an image has
+    // been acquired and is ready for rendering, and one to
+    // signal that rendering has finished and presentation can
+    // happen.
+    let semaphore_info = vk::SemaphoreCreateInfo::builder();
+    data.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
+    data.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
+
+    info!("Semaphores configured.");
+    Ok(())
 }
 
 extern "system" fn debug_callback(

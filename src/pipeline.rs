@@ -91,7 +91,39 @@ pub unsafe fn create_render_pass(
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(color_attachments);
+
+    // Subpass dependencies specify memory and execution
+    // dependencies between subpasses. Although we have only a
+    // single subpass now, the operations before and after this
+    // subpass also count as implicit subpasses. The subpass
+    // dependency struct is then built from:
+    //  - A source subpass with index SUBPASS_EXTERNAL (implicit
+    //    subpass) and a destination subpass with index 0;
+    //  - A source and destination stages, both
+    //    COLOR_ATTACHMENT_OUTPUT (final color values, after
+    //    blending, since the image we want to present during
+    //    our subpass is the final one in the pipeline)
+    //  - A source and destination access mask. The source has
+    //    no access flags, while the destination is marked as
+    //    COLOR_ATTACHMENT_WRITE: these settings prevent the
+    //    transition from happening until it's actually
+    //    necessary (and allowed).
+    let dependency = vk::SubpassDependency::builder()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
     
+    let attachments = &[color_attachment];
+    let subpasses = &[subpass];
+    let dependencies = &[dependency];
+    let info = vk::RenderPassCreateInfo::builder()
+        .attachments(attachments)
+        .subpasses(subpasses)
+        .dependencies(dependencies);
+
     // The render pass info struct can then finally be created,
     // containing both the attachments and the subpasses.
     let color_attachments = &[color_attachment];
@@ -358,17 +390,6 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .logic_op_enable(false)
         .attachments(attachments);
 
-    // A limited amount of the state previously specified can be
-    // changed at runtime without recreating the pipeline, like
-    // the viewport size, the line width or blend constants.
-    // This will ignore the configuration of these values and
-    // require to specify them at drawing time.
-    let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
-        .dynamic_states(&[
-            vk::DynamicState::VIEWPORT,
-            vk::DynamicState::SCISSOR,
-        ]);
-
     // The ressources that can be accessed by the pipeline, like
     // uniforms (global data shared across shaders) or push
     // constants (small bunches of data sent to a shader), are
@@ -406,7 +427,6 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .rasterization_state(&rasterization_state)
         .multisample_state(&multisample_state)
         .color_blend_state(&color_blend_state)
-        .dynamic_state(&dynamic_state)
         .layout(data.pipeline_layout)
         .render_pass(data.render_pass)
         .subpass(0)
@@ -418,7 +438,9 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     // single call. The first parameter, the pipeline cache, is
     // used to store and reuse the results of pipeline creation
     // calls, which can speed up the whole process.
-    data.pipeline = device.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?.0[0];
+    data.pipeline = device
+        .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)?
+        .0[0];
 
     device.destroy_shader_module(vert_module, None);
     device.destroy_shader_module(frag_module, None);

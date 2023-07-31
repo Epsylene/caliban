@@ -9,7 +9,7 @@ use log::*;
 
 pub unsafe fn create_framebuffers(
     device: &Device, 
-    data: &mut AppData
+    data: &mut AppData,
 ) -> Result<()> {
     // Each GPU frame can have a number of attachments
     // associated to it, like color, depth, etc. The render pass
