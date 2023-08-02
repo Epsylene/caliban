@@ -7,6 +7,8 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
 use log::*;
 
+pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
 pub unsafe fn create_render_pass(
     instance: &Instance,
     device: &Device,

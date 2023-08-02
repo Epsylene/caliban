@@ -59,8 +59,10 @@ pub struct AppData {
     //   be submitted to a queue for execution
     // - Command pool: memory allocator for a set of command
     //   buffers
-    // - Semaphores: synchronization primitive to insert a
-    //   dependency within or accross command queue operations
+    // - Semaphores: GPU-GPU synchronization primitive to insert
+    //   a dependency within or accross command queue operations
+    // - Fences: CPU-GPU synchronization primitive to insert a
+    //   dependency between queues and the host
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -77,8 +79,10 @@ pub struct AppData {
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_buffers: Vec<vk::CommandBuffer>,
     pub command_pool: vk::CommandPool,
-    pub image_available_semaphore: vk::Semaphore,
-    pub render_finished_semaphore: vk::Semaphore,
+    pub image_available_semaphores: Vec<vk::Semaphore>,
+    pub render_finished_semaphores: Vec<vk::Semaphore>,
+    pub rendering_fences: Vec<vk::Fence>,
+    pub images_in_flight: Vec<vk::Fence>,
 }
 
 pub struct App {
@@ -86,6 +90,7 @@ pub struct App {
     instance: Instance,
     data: AppData,
     pub device: Device,
+    frame: usize,
 }
 
 impl App {
@@ -151,31 +156,57 @@ impl App {
         // 
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device })
+        Ok(Self { entry, instance, data, device, frame: 0 })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
         // The first step in rendering The Triangle (TM) is to
-        // acquire an image on the swapchain. The "acquire next
-        // image" method takes in the swapchain from which to
-        // acquire the image, a timeout value specifying how
-        // long the function is to wait if no image is available
-        // (in nanoseconds), a semaphore and/or a fence to
-        // signal when the image is acquired, and returns the
-        // index of the next available presentable image in the
-        // swapchain.
+        // acquire an image on the swapchain. Before that,
+        // however, we need to wait for the previous frame to
+        // finish rendering, which is done by waiting for the
+        // fence corresponding to that frame.
+        self.device.wait_for_fences(
+            &[self.data.rendering_fences[self.frame]], 
+            true, 
+            u64::MAX
+        )?;
+
+        // The "acquire next image" method takes in the
+        // swapchain from which to acquire the image, a timeout
+        // value specifying how long the function is to wait if
+        // no image is available (in nanoseconds), a semaphore
+        // and/or a fence to signal when the image is acquired,
+        // and returns the index of the next available
+        // presentable image in the swapchain.
         let image_index = self
             .device
             .acquire_next_image_khr(
                 self.data.swapchain,
                 u64::MAX,
-                self.data.image_available_semaphore,
+                self.data.image_available_semaphores[self.frame],
                 vk::Fence::null()
             )?
             .0 as usize;
 
-        // The queue submit operation is then configured with a
-        // submit info struct, containing:
+        // If the image is already in flight, we wait for the
+        // fence corresponding to the acquired image to be
+        // signaled (in other words, we wait for it to be
+        // available).
+        if !self.data.images_in_flight[image_index].is_null() {
+            self.device.wait_for_fences(
+                &[self.data.images_in_flight[image_index]], 
+                true, 
+                u64::MAX
+            )?;
+        }
+
+        // Once it has been signaled, the image is in render by
+        // the current frame, so we set the "image in flight"
+        // fence to the "rendering" fence for this frame.
+        self.data.images_in_flight[image_index] = self.data.rendering_fences[self.frame];
+
+        // We can now configure the queue submit operation with
+        // a submit info struct, containing:
         //  - wait_semaphores: an array of semaphores upon which
         //    to wait before execution begins (here the "image
         //    available" semaphore);
@@ -193,20 +224,27 @@ impl App {
         //    be signaled when the command buffers have
         //    completed execution (the "render finished"
         //    semaphore).
-        let image_available = &[self.data.image_available_semaphore];
+        let image_available = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let command_buffers = &[self.data.command_buffers[image_index]];
-        let render_finished = &[self.data.render_finished_semaphore];
+        let render_finished = &[self.data.render_finished_semaphores[self.frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(image_available)
             .wait_dst_stage_mask(wait_stages)
             .command_buffers(command_buffers)
             .signal_semaphores(render_finished);
 
-        // Lastly, the queue and its info can be submitted, with
-        // an optional fence that will be signaled when the
-        // workload is much larger.
-        self.device.queue_submit(self.data.graphics_queue, &[submit_info], vk::Fence::null())?;
+        // The rendering fences are then restored to their
+        // unsignaled state.
+        self.device.reset_fences(&[self.data.rendering_fences[self.frame]])?;
+
+        // Lastly, the queue and its info can be submitted, as
+        // well as the fence corresponding to the current frame.
+        self.device.queue_submit(
+            self.data.graphics_queue, 
+            &[submit_info], 
+            self.data.rendering_fences[self.frame]
+        )?;
 
         // The final step of drawing a frame is submitting the
         // result back to the swapchain to have it eventually
@@ -226,13 +264,28 @@ impl App {
             .image_indices(image_indices);
 
         self.device.queue_present_khr(self.data.present_queue, &present_info)?;
+        
+        // The current frame in the swapchain is increased by 1
+        // within the MAX_FRAMES_IN_FLIGHT limit, which is the
+        // maximum number of frames processed simultaneously.
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+        debug!("Rendering...");
         Ok(())
     }
 
     pub unsafe fn destroy(&mut self) {
-        self.device.destroy_semaphore(self.data.render_finished_semaphore, None);
-        self.device.destroy_semaphore(self.data.image_available_semaphore, None);
+        self.data.rendering_fences
+            .iter()
+            .for_each(|&f| self.device.destroy_fence(f, None));
+        
+        self.data.render_finished_semaphores
+            .iter()
+            .for_each(|&s| self.device.destroy_semaphore(s, None));
+        self.data.image_available_semaphores
+            .iter()
+            .for_each(|&s| self.device.destroy_semaphore(s, None));
+        
         self.device.destroy_command_pool(self.data.command_pool, None);
 
         self.data.framebuffers
@@ -381,18 +434,60 @@ unsafe fn create_sync_objects(
     // execution is undefined, which poses a problem because
     // each operation depends on the completion of the previous
     // one. To solve this, Vulkan provides two ways of
-    // synchronizing swapchain events: fences and semaphores.
-    // Semaphores are simply signal identifiers that indicate
-    // when a batch of commands has been processed. In our case,
-    // we will need one semaphore to signal that an image has
-    // been acquired and is ready for rendering, and one to
-    // signal that rendering has finished and presentation can
-    // happen.
+    // synchronizing swapchain events: fences and semaphores. We
+    // have to take care of setting the SIGNALED flag when
+    // creating the fences, because they are in the unsignaled
+    // state by default, which will freeze the program when the
+    // render function waits for the fences to be signaled the
+    // first time.
     let semaphore_info = vk::SemaphoreCreateInfo::builder();
-    data.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
-    data.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
+    let fence_info = vk::FenceCreateInfo::builder()
+        .flags(vk::FenceCreateFlags::SIGNALED);
 
-    info!("Semaphores configured.");
+    for _ in 0..MAX_FRAMES_IN_FLIGHT {
+        // Semaphores are simply signal identifiers that
+        // indicate when a batch of commands has been processed.
+        // In our case, we will need one semaphore to signal
+        // that an image has been acquired and is ready for
+        // rendering, and one to signal that rendering has
+        // finished and presentation can happen.
+        data.image_available_semaphores
+            .push(device.create_semaphore(&semaphore_info, None)?);
+        data.render_finished_semaphores
+            .push(device.create_semaphore(&semaphore_info, None)?);
+
+        // Fences are similar to semaphores, but they have
+        // accessible state and can be waited for from the
+        // program code; thus, they can insert a dependency
+        // between a queue and the host, which means that they
+        // are used for CPU-GPU synchronization, while
+        // semaphores handle GPU-GPU synchronization. For
+        // example, if the CPU is submitting work faster than
+        // the GPU can process it, semaphores and command
+        // buffers will be used for multiple frames at the same
+        // time: creating a fence for each frame in the
+        // swapchain will allow us to wait for objects to finish
+        // executing while having multiple frames "in-flight"
+        // (worked on asynchronously).
+        data.rendering_fences.push(device.create_fence(&fence_info, None)?);
+    }
+
+    // In-flight fences avoid concurrent usage of command
+    // buffers and semaphores due to high CPU frequencies, but
+    // if images are returned by the swapchain out-of-order then
+    // it's possible that we may start rendering to a swapchain
+    // image that is already "in flight". To avoid this, we need
+    // to track for each image in the swapchain if a frame in
+    // flight is currently using it, by refering to the
+    // corresponding fence. Because no frame uses an image
+    // initially, we explicitly initialize each image fence to
+    // null.
+    data.images_in_flight = data.swapchain_images
+        .iter()
+        .map(|_| vk::Fence::null())
+        .collect();
+
+    info!("Sync objects configured.");
     Ok(())
 }
 
