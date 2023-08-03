@@ -86,11 +86,21 @@ pub struct AppData {
 }
 
 pub struct App {
+    // - Entry: the Vulkan entry point, the first function to
+    //   call to load the Vulkan library
+    // - Instance: the Vulkan instance, the handle to the Vulkan
+    //   library and the first object to create
+    // - Device: the logical device, the interface to the
+    //   physical device and the object to create other Vulkan
+    //   objects
+    // - Frame: the current frame in the swapchain
+    // - Resized: whether the window has been resized
     entry: Entry,
     instance: Instance,
     data: AppData,
     pub device: Device,
     frame: usize,
+    pub resized: bool,
 }
 
 impl App {
@@ -153,10 +163,51 @@ impl App {
         create_command_pool(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
-        // 
+        // To handle CPU-GPU and GPU-GPU synchronization, we
+        // have to create several sync objects like fences and
+        // semaphores.
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device, frame: 0 })
+        Ok(Self { entry, instance, data, device, frame: 0, resized: false })
+    }
+
+    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+        // Even with a fully functional swapchain, it is
+        // possible for the window surface to change such that
+        // the swapchain is no longer compatible with it (after
+        // a window resize, for example). The swapchain and all
+        // the objects that depend on it or the window must then
+        // be recreated. We will first call a function to wait
+        // on the device until all ressources are free to use,
+        // and destroy the swapchain before recreating it.
+        self.device.device_wait_idle()?;
+        self.destroy_swapchain();
+        
+        // Then, the swapchain is recreated. The images views
+        // are recreated because they depend on the swapchain
+        // images; the render pass is recreated because it
+        // depends on the format of the swapchain images; the
+        // pipeline is recreated because it defines viewport and
+        // scissor rectangle sizes (note that it is possible to
+        // define these as dynamic state to avoid redefining
+        // them); the framebuffers and command buffers also
+        // directly depend on the swapchain images.
+        create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
+        create_swapchain_image_views(&self.device, &mut self.data)?;
+        create_render_pass(&self.instance, &self.device, &mut self.data)?;
+        create_pipeline(&self.device, &mut self.data)?;
+        create_framebuffers(&self.device, &mut self.data)?;
+        create_command_buffers(&self.device, &mut self.data)?;
+        
+        // Lastly, we resize our list of fences for the new
+        // swapchain, since there is a possibility that there
+        // might be a different number of swapchain images after
+        // recreation.
+        self.data
+            .images_in_flight
+            .resize(self.data.swapchain_images.len(), vk::Fence::null());
+
+        Ok(())
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -176,17 +227,32 @@ impl App {
         // value specifying how long the function is to wait if
         // no image is available (in nanoseconds), a semaphore
         // and/or a fence to signal when the image is acquired,
-        // and returns the index of the next available
-        // presentable image in the swapchain.
-        let image_index = self
+        // and returns a result on the index of the next
+        // available presentable image in the swapchain.
+        let result = self
             .device
             .acquire_next_image_khr(
                 self.data.swapchain,
                 u64::MAX,
                 self.data.image_available_semaphores[self.frame],
                 vk::Fence::null()
-            )?
-            .0 as usize;
+            );
+
+        // The result contains the index of the acquired image
+        // in the swapchain, but if the swapchain is no longer
+        // adequate for rendering (for example, if the window
+        // has been resized), the result is either an
+        // OUT_OF_DATE error (the swapchain has become
+        // incompatible with the surface and can no longer be
+        // used for rendering) or a SUBOPTIMAL error (the
+        // swapchain can still be used, but the surface
+        // properties are no longer matched exactly). In the
+        // first case, we have to recreate the swapchain.
+        let image_index = match result {
+            Ok((image_index, _)) => image_index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
+            Err(e) => return Err(anyhow!("Failed to acquire next image: {}", e)),
+        };
 
         // If the image is already in flight, we wait for the
         // fence corresponding to the acquired image to be
@@ -263,7 +329,26 @@ impl App {
             .swapchains(swapchains)
             .image_indices(image_indices);
 
-        self.device.queue_present_khr(self.data.present_queue, &present_info)?;
+        // Just like when we acquired the image, presenting
+        // images returns a result on the optimality of the
+        // swapchain.
+        let result = self.device.queue_present_khr(self.data.present_queue, &present_info);
+        let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR)
+            || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
+
+        // Then, if the swapchain is suboptimal or out-of-date,
+        // we recreate it. It is important to do this after
+        // presentation to ensure that the semaphores are in a
+        // consistent state, otherwise a signalled semaphore may
+        // never be properly waited upon. We also check on the
+        // flag 'resized' in case the platform does not trigger
+        // an OUT_OF_DATE error when the window is resized.
+        if changed || self.resized {
+            self.resized = false;
+            self.recreate_swapchain(window)?;
+        } else if let Err(e) = result {
+            return Err(anyhow!("Failed to present queue: {}", e));
+        }
         
         // The current frame in the swapchain is increased by 1
         // within the MAX_FRAMES_IN_FLIGHT limit, which is the
@@ -275,6 +360,8 @@ impl App {
     }
 
     pub unsafe fn destroy(&mut self) {
+        self.destroy_swapchain();
+
         self.data.rendering_fences
             .iter()
             .for_each(|&f| self.device.destroy_fence(f, None));
@@ -287,11 +374,23 @@ impl App {
             .for_each(|&s| self.device.destroy_semaphore(s, None));
         
         self.device.destroy_command_pool(self.data.command_pool, None);
+        self.device.destroy_device(None);
+        self.instance.destroy_surface_khr(self.data.surface, None);
 
+        if VALIDATION_ENABLED {
+            self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
+        }
+        
+        self.instance.destroy_instance(None);
+        info!("Destroyed the Vulkan instance.");
+    }
+
+    unsafe fn destroy_swapchain(&mut self) {
         self.data.framebuffers
             .iter()
             .for_each(|&f| self.device.destroy_framebuffer(f, None));
 
+        self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
@@ -301,15 +400,8 @@ impl App {
             .for_each(|&view| self.device.destroy_image_view(view, None));
         
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
-        self.device.destroy_device(None);
-        self.instance.destroy_surface_khr(self.data.surface, None);
-        
-        if VALIDATION_ENABLED {
-            self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
-        }
-        
-        self.instance.destroy_instance(None);
-        info!("Destroyed the Vulkan instance.");
+
+        info!("Destroyed the swapchain and related objects.");
     }
 }
 

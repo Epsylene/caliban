@@ -31,6 +31,8 @@ fn main() -> Result<()> {
 
     let mut app = unsafe { App::create(&window)? };
     let mut destroying = false;
+    let mut minimized = false;
+
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
         
@@ -53,11 +55,22 @@ fn main() -> Result<()> {
 
                 info!("Destroyed the app.");
             },
-            Event::MainEventsCleared if !destroying => {
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                .. 
+            } => {
+                if size.width == 0 || size.height == 0 {
+                    minimized = true;
+                } else {
+                    minimized = false;
+                    app.resized = true;
+                }
+            },
+            Event::MainEventsCleared if !destroying && !minimized => {
                 // Render the app if the main events are cleared
                 // and it is not being destroyed (which is why
                 // we use the 'destroying' boolean in the first
-                // place)
+                // place) nor it is minimized.
                 unsafe { app.render(&window) }.unwrap();
             },
             _ => (),
