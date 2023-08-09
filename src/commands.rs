@@ -7,48 +7,6 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
 use log::*;
 
-pub unsafe fn create_framebuffers(
-    device: &Device, 
-    data: &mut AppData,
-) -> Result<()> {
-    // Each GPU frame can have a number of attachments
-    // associated to it, like color, depth, etc. The render pass
-    // describes the nature of these attachments, but the object
-    // used to actually bind them to an image is the
-    // framebuffer. In other words, a framebuffer provides the
-    // attachments that a render pass needs while rendering.
-    // Attachments can be shared between framebuffers: for
-    // example, two framebuffers could have two different color
-    // buffer attachments (representing two different swapchain
-    // frames) but only one depth buffer (which does not need to
-    // be recreated for each frame).
-    data.framebuffers = data
-        .swapchain_image_views
-        .iter()
-        .map(|i| {
-            // We only have one attachment per framebuffer for
-            // now, because we are only rendering to the color
-            // attachment. However, since we need to be able to
-            // write to each image independently (because we
-            // don't know in advance which frame will be
-            // presented at a time), we have to create one
-            // framebuffer for each image in the swapchain.
-            let images = &[*i];
-            let create_info = vk::FramebufferCreateInfo::builder()
-                .render_pass(data.render_pass)
-                .attachments(images)
-                .width(data.swapchain_extent.width)
-                .height(data.swapchain_extent.height)
-                .layers(1);
-
-            device.create_framebuffer(&create_info, None)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    info!("Framebuffers created.");
-    Ok(())
-}
-
 pub unsafe fn create_command_pool(
     instance: &Instance,
     device: &Device,
@@ -181,12 +139,18 @@ pub unsafe fn create_command_buffers(
         // GRAPHICS or COMPUTE pipeline.
         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
 
-        // And, finally, draw the triangle. Apart from the
-        // command buffer, we have to tell the number of
-        // vertices (3), the number of instances (1 in our case,
-        // where we are not doing instaced rendering), the first
-        // vertex index in the vertex buffer (0, no offset) and
-        // the first instance index (idem).
+        // And, finally, draw the triangle. We first have to
+        // bind the vertex buffers containing the vertex data
+        // for our triangle; apart from the command buffer, we
+        // have to tell the index of the vertex input binding
+        // we're using (0), the vertex buffers to bind and the
+        // byte offsets to start reading vertex data from. The
+        // draw command takes the number of vertices (3), the
+        // number of instances (1 in our case, where we are not
+        // doing instaced rendering), the first vertex index in
+        // the vertex buffer (0, no offset) and the first
+        // instance index (idem).
+        device.cmd_bind_vertex_buffers(command_buffer, 0, &[data.vertex_buffer], &[0]);
         device.cmd_draw(command_buffer, 3, 1, 0, 0);
 
         // The render pass can then be ended, and the command

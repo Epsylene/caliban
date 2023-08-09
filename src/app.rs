@@ -2,7 +2,8 @@ use crate::{
     devices::*,
     swapchain::*, 
     pipeline::*,
-    buffers::*,
+    commands::*, 
+    vertex::*,
 };
 use std::collections::HashSet;
 
@@ -16,6 +17,7 @@ use vulkanalia::{
     vk::KhrSurfaceExtension,
     vk::KhrSwapchainExtension,
 };
+use glam::{Vec2, Vec3};
 use anyhow::{anyhow, Result};
 use log::*;
 
@@ -63,6 +65,9 @@ pub struct AppData {
     //   a dependency within or accross command queue operations
     // - Fences: CPU-GPU synchronization primitive to insert a
     //   dependency between queues and the host
+    // - Vertex buffer: buffer containing vertex data to upload
+    //   to the GPU
+    // - Device memory: opaque handle to device memory
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -83,6 +88,8 @@ pub struct AppData {
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub rendering_fences: Vec<vk::Fence>,
     pub images_in_flight: Vec<vk::Fence>,
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_buffer_memory: vk::DeviceMemory,
 }
 
 pub struct App {
@@ -156,11 +163,15 @@ impl App {
 
         // The final step before actual rendering is to create
         // the framebuffers, which we use to bind the
-        // attachments specified during render pass creation,
-        // and the command buffers (allocated in a command
-        // pool), to record them and submit them to the GPU.
+        // attachments specified during render pass creation;
+        // the command pool, to allocate memory for the command
+        // buffers; the vertex buffers, to later populate vertex
+        // data for the GPU; and the command buffers (allocated
+        // in a command pool), to record them and submit them to
+        // the GPU.
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
+        create_vertex_buffer(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         // To handle CPU-GPU and GPU-GPU synchronization, we
@@ -361,6 +372,8 @@ impl App {
 
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
+        self.device.destroy_buffer(self.data.vertex_buffer, None);
+        self.device.free_memory(self.data.vertex_buffer_memory, None);
 
         self.data.rendering_fences
             .iter()

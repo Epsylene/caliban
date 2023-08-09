@@ -1,6 +1,7 @@
 use crate::{
     app::AppData,
-    shaders::*,    
+    shaders::*,
+    vertex::Vertex,
 };
 
 use vulkanalia::prelude::v1_0::*;
@@ -8,6 +9,48 @@ use anyhow::Result;
 use log::*;
 
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
+pub unsafe fn create_framebuffers(
+    device: &Device, 
+    data: &mut AppData,
+) -> Result<()> {
+    // Each GPU frame can have a number of attachments
+    // associated to it, like color, depth, etc. The render pass
+    // describes the nature of these attachments, but the object
+    // used to actually bind them to an image is the
+    // framebuffer. In other words, a framebuffer provides the
+    // attachments that a render pass needs while rendering.
+    // Attachments can be shared between framebuffers: for
+    // example, two framebuffers could have two different color
+    // buffer attachments (representing two different swapchain
+    // frames) but only one depth buffer (which does not need to
+    // be recreated for each frame).
+    data.framebuffers = data
+        .swapchain_image_views
+        .iter()
+        .map(|i| {
+            // We only have one attachment per framebuffer for
+            // now, because we are only rendering to the color
+            // attachment. However, since we need to be able to
+            // write to each image independently (because we
+            // don't know in advance which frame will be
+            // presented at a time), we have to create one
+            // framebuffer for each image in the swapchain.
+            let images = &[*i];
+            let create_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(data.render_pass)
+                .attachments(images)
+                .width(data.swapchain_extent.width)
+                .height(data.swapchain_extent.height)
+                .layers(1);
+
+            device.create_framebuffer(&create_info, None)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    info!("Framebuffers created.");
+    Ok(())
+}
 
 pub unsafe fn create_render_pass(
     instance: &Instance,
@@ -118,6 +161,8 @@ pub unsafe fn create_render_pass(
         .src_access_mask(vk::AccessFlags::empty())
         .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
     
+    // The render pass info struct can then finally be created,
+    // containing both the attachments and the subpasses.
     let attachments = &[color_attachment];
     let subpasses = &[subpass];
     let dependencies = &[dependency];
@@ -125,14 +170,6 @@ pub unsafe fn create_render_pass(
         .attachments(attachments)
         .subpasses(subpasses)
         .dependencies(dependencies);
-
-    // The render pass info struct can then finally be created,
-    // containing both the attachments and the subpasses.
-    let color_attachments = &[color_attachment];
-    let subpasses = &[subpass];
-    let info = vk::RenderPassCreateInfo::builder()
-        .attachments(color_attachments)
-        .subpasses(subpasses);
 
     data.render_pass = device.create_render_pass(&info, None)?;
 
@@ -193,7 +230,11 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     //  - Attributes: the type of the vertex attributes (color,
     //    position, normal, etc), which binding to load them
     //    from and at which offset.
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+    let bindings = &[Vertex::binding_description()];
+    let attributes = Vertex::attribute_descriptions();
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(bindings)
+        .vertex_attribute_descriptions(&attributes);
 
     // The input assembly info struct describes the kind of
     // geometry that will be drawn from the vertices and if

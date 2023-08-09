@@ -129,6 +129,8 @@ name = "caliban"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glam",
+ "lazy_static",
  "log",
  "pretty_env_logger",
  "thiserror",
@@ -340,6 +342,12 @@ name = "foreign-types-shared"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
+
+[[package]]
+name = "glam"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42218cb640844e3872cc3c153dc975229e080a6c4733b34709ef445610550226"
 
 [[package]]
 name = "hashbrown"

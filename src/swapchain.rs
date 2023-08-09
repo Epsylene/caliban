@@ -74,7 +74,7 @@ fn get_swapchain_surface_format(
             && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
         })
         .cloned()
-        .unwrap_or_else(|| formats[0])
+        .unwrap_or(formats[0])
 }
 
 fn get_swapchain_present_mode(
