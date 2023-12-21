@@ -31,7 +31,7 @@ impl SwapchainSupport {
         // directly to a screen (for example because they are
         // designed for servers and don't have any display
         // outputs), so swapchain support and compatibility with
-        // our window surface have to be queried before.
+        // our window surface have to be queried beforehand.
         Ok(Self {
             capabilities: instance
                 .get_physical_device_surface_capabilities_khr(
@@ -156,8 +156,9 @@ pub unsafe fn create_swapchain_image_views(
         .map(|&i| {
             // The first element of the view to define is how
             // the image colors are mapped to the image view
-            // colors. We don't want to swizzle the color
-            // components here, so we just go for the identity.
+            // colors. We don't want to swizzle (map to a value)
+            // the color components here, so we just go for the
+            // identity.
             let component_mapping = vk::ComponentMapping::builder()
                 .r(vk::ComponentSwizzle::IDENTITY)
                 .g(vk::ComponentSwizzle::IDENTITY)
@@ -172,17 +173,18 @@ pub unsafe fn create_swapchain_image_views(
             // - aspect_mask: the part of the image data (the
             //   image aspect) to be accessed (one image could
             //   contain both RGB data and depth info bits, for
-            //   example)
+            //   example). In this case, we want the color bits
+            //   of the image;
             // - base_mip_level: the first accessible mipmap
             //   level (here 0, since we don't use mipmapping
-            //   yet)
+            //   yet);
             // - level_count: the number of accessible mipmap
-            //   levels
+            //   levels;
             // - base_array_layer: the first accessible array
-            //   layer
+            //   layer (simultaneous views of the same image,
+            //   for example for stereoscopic rendering);
             // - layer_count: the number of accessible array
-            //   layers (simultaneous views of the same image,
-            //   for example for stereoscopic rendering)
+            //   layers.
             let subresource_range = vk::ImageSubresourceRange::builder()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(0)
@@ -275,7 +277,7 @@ instance: &Instance,
     //   TRANSFER_DST (transfer destination flag).
     // - pre_transform: a transform that should be applied to
     //   the images before presentation, like a clockwise
-    //   rotation or horizontal flip. We don't any special
+    //   rotation or horizontal flip. We don't want any special
     //   transform, so we specify the identity.
     // - composite_alpha: specifies if the alpha channel should
     //   be used for blending with other windows in the window

@@ -1,6 +1,7 @@
 use crate::{
     app::AppData,
     queues::QueueFamilyIndices,
+    vertex::*,
 };
 
 use vulkanalia::prelude::v1_0::*;
@@ -21,10 +22,10 @@ pub unsafe fn create_command_pool(
     // a singular thread. Command pool creation takes only two
     // parameters:
     //  - Pool flags, which can be either TRANSIENT (command
-    //    buffers that are rerecorded with new command very
-    //    often), RESET_COMMAND_BUFFER (allow command buffers to
-    //    be rerecorded individually rather than globally) and
-    //    PROTECTED (command buffers which are stored in
+    //    buffers that are re-recorded with new commands very
+    //    often), RESET_COMMAND_BUFFER (allow command buffers
+    //    to be re-recorded individually rather than globally)
+    //    and PROTECTED (command buffers which are stored in
     //    "protected memory", preventing unauthorized write or
     //    access);
     //  - Queue family index, which specifies the queue family
@@ -51,7 +52,7 @@ pub unsafe fn create_command_buffers(
     // queue to be executed.
     //
     // The command buffers allocation takes three parameters:
-    //  - The command pool they are allocated on;
+    //  - The command pool they are allocated in;
     //  - The level of the buffers: this can be either PRIMARY
     //    (command buffers that can be submitted directly to a
     //    Vulkan queue to be executed) or SECONDARY (buffers
@@ -160,5 +161,116 @@ pub unsafe fn create_command_buffers(
     }
 
     info!("Command buffers created.");
+    Ok(())
+}
+
+pub unsafe fn create_buffer(
+    instance: &Instance,
+    device: &Device,
+    data: &AppData,
+    size: vk::DeviceSize,
+    usage: vk::BufferUsageFlags,
+    properties: vk::MemoryPropertyFlags,
+) -> Result<(vk::Buffer, vk::DeviceMemory)> {
+    // Buffers in Vulkan are regions of memory used for storing
+    // arbitrary data that can be read by the graphics card.
+    // They are defined by their size (in bytes), their usage
+    // (as vertex buffers, index buffers, uniform buffers, etc)
+    // and their sharing mode, that is, how they will be
+    // accessed: either only by queue families owning them
+    // (EXCLUSIVE) or by a number of (previously specified)
+    // queue families (CONCURRENT).
+    let buffer_info = vk::BufferCreateInfo::builder()
+        .size(size)
+        .usage(usage)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+    
+    let buffer = device.create_buffer(&buffer_info, None)?;
+    
+    // After creating the buffer, we need to allocate memory for
+    // it. To do so, we first need to get the memory
+    // requirements of the buffer, which will get us 3 fields:
+    //  - the size of the required amount of memory, in bytes;
+    //  - the memory alignment, that is, the offset in bytes
+    //    where the buffer begins in the allocated region of
+    //    memory (one might allocate enough memory to fit
+    //    several buffers, thus the need to tell the offset of a
+    //    given buffer);
+    //  - the memory type bits, a bit field of the memory types
+    //    that are suitable for the buffer.
+    let requirements = device.get_buffer_memory_requirements(buffer);
+    
+    // Now that we have the requirements for the buffer memory,
+    // we can actually build the memory allocation info struct,
+    // with the size of the allocation and the index of the
+    // memory type to use based on the device requirements and
+    // memory properties we want.
+    let memory_info = vk::MemoryAllocateInfo::builder()
+        .allocation_size(requirements.size)
+        .memory_type_index(find_memory_type(
+            instance,
+            data,
+            properties,
+            requirements,
+        )?);
+
+    // We can then actually allocate memory and bind it to the
+    // vertex buffer if the allocation was successful, while
+    // specifying the offset of the buffer in the allocated
+    // memory.
+    let buffer_memory = device.allocate_memory(&memory_info, None)?;
+    device.bind_buffer_memory(buffer, buffer_memory, 0)?;
+
+    Ok((buffer, buffer_memory))
+}
+
+pub unsafe fn copy_buffer(
+    device: &Device,
+    data: &AppData,
+    source: vk::Buffer,
+    destination: vk::Buffer,
+    size: vk::DeviceSize,
+) -> Result<()> {
+    // Copying data between buffers, like all commands, is done
+    // with a command buffer. We will then first allocate a
+    // temporary command buffer for the transfer operation.
+    let info = vk::CommandBufferAllocateInfo::builder()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_pool(data.command_pool)
+        .command_buffer_count(1);
+
+    let command_buffer = device.allocate_command_buffers(&info)?[0];
+    
+    // We may then immediately start recording the command
+    // buffer, specifying that it is to be used only once.
+    let info = vk::CommandBufferBeginInfo::builder()
+        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    device.begin_command_buffer(command_buffer, &info)?;
+
+    // We can then actually copy the data from the source buffer
+    // to the destination buffer. We can define one or several
+    // regions for the copy, each consisting of a source buffer
+    // offset, a destination buffer offset, and a size. After
+    // copying, the command buffer can be ended.
+    let regions = vk::BufferCopy::builder().size(size);
+    device.cmd_copy_buffer(command_buffer, source, destination, &[regions]);
+    device.end_command_buffer(command_buffer)?;
+
+    // After we have finished recording, we can execute the
+    // command buffer by submitting it to the queue, and then
+    // wait for the queue to complete operations before
+    // continuing. Using a fence instead of queue_wait_idle()
+    // would allow to schedule multiple transfers at once and
+    // wait for all of them to complete, instead of executing
+    // one at a time.
+    let command_buffers = &[command_buffer];
+    let info = vk::SubmitInfo::builder()
+        .command_buffers(command_buffers);
+    device.queue_submit(data.graphics_queue, &[info], vk::Fence::null())?;
+    device.queue_wait_idle(data.graphics_queue)?;
+
+    device.free_command_buffers(data.command_pool, &[command_buffer]);
+
     Ok(())
 }

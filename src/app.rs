@@ -2,7 +2,7 @@ use crate::{
     devices::*,
     swapchain::*, 
     pipeline::*,
-    commands::*, 
+    buffers::*, 
     vertex::*,
 };
 use std::collections::HashSet;
@@ -17,7 +17,6 @@ use vulkanalia::{
     vk::KhrSurfaceExtension,
     vk::KhrSwapchainExtension,
 };
-use glam::{Vec2, Vec3};
 use anyhow::{anyhow, Result};
 use log::*;
 
@@ -97,6 +96,8 @@ pub struct App {
     //   call to load the Vulkan library
     // - Instance: the Vulkan instance, the handle to the Vulkan
     //   library and the first object to create
+    // - Data: the application data, containing all the objects
+    //   necessary for rendering
     // - Device: the logical device, the interface to the
     //   physical device and the object to create other Vulkan
     //   objects
@@ -511,7 +512,11 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
 
     if VALIDATION_ENABLED {
         // Vulkan structs, like the instance info, have the
-        // ability to be extended with other structs,  
+        // ability to be extended with other structs, which can
+        // in turn be extended with other structs, and so on. In
+        // this case, we are extending the instance info with
+        // the debug info if the validation layers are enabled,
+        // which will be used to create the debug messenger.
         info = info.push_next(&mut debug_info);
     }
 

@@ -74,7 +74,7 @@ pub unsafe fn pick_physical_device(
     // same time, for example), and in fact a Vulkan instance
     // can set up and use any number of them simultaneously, but
     // we will stick here to listing the available physical
-    // devices and picking the first graphics device.
+    // devices and picking the first graphics-capable one.
     for device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(device);
 

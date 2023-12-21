@@ -4,7 +4,7 @@ mod devices;
 mod swapchain;
 mod shaders;
 mod pipeline;
-mod commands;
+mod buffers;
 mod vertex;
 
 use vulkanalia::vk::DeviceV1_0;

@@ -277,12 +277,12 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .module(vert_module)
         .name(b"main\0");
 
-    // The next step involves configuring the viewport, which is
-    // the region of the framebuffer that the output will be
-    // rendered to. It is defined by a rectangle from (x, y) to
-    // (x + width, y + height). Furthermore, the range of depth
-    // values to use for the framebuffer can be specified with
-    // min and max values between 0 and 1.
+    // The next step involves configuring the viewport, which
+    // is the region of the framebuffer where the output will
+    // be rendered to. It is defined by a rectangle from (x, y)
+    // to (x + width, y + height). Furthermore, the range of
+    // depth values to use for the framebuffer can be specified
+    // with min and max values between 0 and 1.
     let viewport = vk::Viewport::builder()
         .x(0.0)
         .y(0.0)
