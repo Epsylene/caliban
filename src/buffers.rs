@@ -142,17 +142,16 @@ pub unsafe fn create_command_buffers(
 
         // And, finally, draw the triangle. We first have to
         // bind the vertex buffers containing the vertex data
-        // for our triangle; apart from the command buffer, we
-        // have to tell the index of the vertex input binding
-        // we're using (0), the vertex buffers to bind and the
-        // byte offsets to start reading vertex data from. The
-        // draw command takes the number of vertices (3), the
-        // number of instances (1 in our case, where we are not
-        // doing instaced rendering), the first vertex index in
-        // the vertex buffer (0, no offset) and the first
-        // instance index (idem).
+        // for our triangle, as well as the index buffer
+        // containing the indices for each vertex in the
+        // buffer. The draw command takes the length of the
+        // index buffer, the number of instances (1 in our
+        // case, where we are not doing instaced rendering),
+        // the first vertex index in the vertex buffer (0, no
+        // offset) and the first instance index (same).
         device.cmd_bind_vertex_buffers(command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+        device.cmd_bind_index_buffer(command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        device.cmd_draw_indexed(command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
 
         // The render pass can then be ended, and the command
         // buffer can stop recording.

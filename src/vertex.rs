@@ -17,11 +17,14 @@ use std::ptr::copy_nonoverlapping as memcpy;
 
 lazy_static! {
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(Vec2::new(0.0, -0.5), Vec3::new(1.0, 0.0, 0.0)),
-        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 1.0, 0.0)),
-        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+        Vertex::new(Vec2::new(-0.5, -0.5), Vec3::new(1.0, 0.0, 0.0)),
+        Vertex::new(Vec2::new(0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
+        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
+        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 0.0)),
     ];
 }
+
+pub const INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
 
 #[repr(C)]
 pub struct Vertex {
@@ -181,6 +184,60 @@ pub unsafe fn create_vertex_buffer(
     device.free_memory(staging_buffer_memory, None);
 
     info!("Vertex buffer created.");
+    Ok(())
+}
+
+pub unsafe fn create_index_buffer(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // The index buffer is created in the same way as the vertex
+    // buffer: first create a staging buffer in host-visible
+    // memory (accesible to the CPU)...
+    let size = (std::mem::size_of::<u16>() * INDICES.len()) as u64;
+    let (staging_buffer, staging_buffer_memory) = create_buffer(
+        instance, 
+        device, 
+        data, 
+        size, 
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+
+    // ...then map the memory...
+    let memory = device.map_memory(
+        staging_buffer_memory,
+        0,
+        size,
+        vk::MemoryMapFlags::empty(),
+    )?;
+
+    // ...and copy the index data into the staging buffer.
+    memcpy(INDICES.as_ptr(), memory.cast(), INDICES.len());
+    device.unmap_memory(staging_buffer_memory);
+
+    // Then, create an index in device-local memory (that is,
+    // the GPU)...
+    let (index_buffer, index_buffer_memory) = create_buffer(
+        instance, 
+        device, 
+        data, 
+        size, 
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    data.index_buffer = index_buffer;
+    data.index_buffer_memory = index_buffer_memory;
+
+    // ...and copy the index data from the staging buffer to
+    // the index buffer.
+    copy_buffer(device, data, staging_buffer, index_buffer, size)?;
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_buffer_memory, None);
+
+    info!("Index buffer created.");
     Ok(())
 }
 

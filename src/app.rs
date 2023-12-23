@@ -67,6 +67,8 @@ pub struct AppData {
     // - Vertex buffer: buffer containing vertex data to upload
     //   to the GPU
     // - Device memory: opaque handle to device memory
+    // - Index buffer: buffer containing the indices for each
+    //   vertex in the vertex buffer
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -89,6 +91,8 @@ pub struct AppData {
     pub images_in_flight: Vec<vk::Fence>,
     pub vertex_buffer: vk::Buffer,
     pub vertex_buffer_memory: vk::DeviceMemory,
+    pub index_buffer: vk::Buffer,
+    pub index_buffer_memory: vk::DeviceMemory,
 }
 
 pub struct App {
@@ -166,13 +170,14 @@ impl App {
         // the framebuffers, which we use to bind the
         // attachments specified during render pass creation;
         // the command pool, to allocate memory for the command
-        // buffers; the vertex buffers, to later populate vertex
-        // data for the GPU; and the command buffers (allocated
-        // in a command pool), to record them and submit them to
-        // the GPU.
+        // buffers; the vertex buffers and index buffers, to
+        // later populate vertex data for the GPU; and the
+        // command buffers (allocated in a command pool), to
+        // record them and submit them to the GPU.
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
+        create_index_buffer(&instance, &device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         // To handle CPU-GPU and GPU-GPU synchronization, we
@@ -373,6 +378,8 @@ impl App {
 
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
+        self.device.destroy_buffer(self.data.index_buffer, None);
+        self.device.free_memory(self.data.index_buffer_memory, None);
         self.device.destroy_buffer(self.data.vertex_buffer, None);
         self.device.free_memory(self.data.vertex_buffer_memory, None);
 
