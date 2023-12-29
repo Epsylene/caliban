@@ -433,12 +433,16 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .logic_op_enable(false)
         .attachments(attachments);
 
-    // The ressources that can be accessed by the pipeline, like
-    // uniforms (global data shared across shaders) or push
-    // constants (small bunches of data sent to a shader), are
-    // described with a pipeline layout object; ours will be
-    // empty for now.
-    let layout_info = vk::PipelineLayoutCreateInfo::builder();
+    // The ressources that can be accessed by the pipeline,
+    // like uniforms (global data shared across shaders) or
+    // push constants (small bunches of data sent to a shader),
+    // are described with a pipeline layout object. In our
+    // case, we only have a single descriptor set, which
+    // contains a single uniform buffer for the MVP
+    // transformation.
+    let descriptor_set_layouts = &[data.descriptor_set_layout];
+    let layout_info = vk::PipelineLayoutCreateInfo::builder()
+        .set_layouts(descriptor_set_layouts);
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 
     // We can now combine all of the structures and objects

@@ -6,6 +6,7 @@ mod shaders;
 mod pipeline;
 mod buffers;
 mod vertex;
+mod descriptors;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

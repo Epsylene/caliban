@@ -4,6 +4,7 @@ use crate::{
     pipeline::*,
     buffers::*, 
     vertex::*,
+    descriptors::*,
 };
 use std::collections::HashSet;
 
@@ -50,6 +51,9 @@ pub struct AppData {
     //   which describe how they should be accessed
     // - Render pass: the render pass describing the different
     //   framebuffer attachments and their usage
+    // - Descriptor set layout: the layout of a descriptor set
+    //   object, a collection of opaque structures representing
+    //   a shader resource each
     // - Pipeline layout: the set of ressources that can be
     //   accessed by the pipeline
     // - Pipeline: the graphics pipeline, the succession of
@@ -80,6 +84,7 @@ pub struct AppData {
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub render_pass: vk::RenderPass,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -160,10 +165,15 @@ impl App {
         // rendering stages that go from taking a bunch of
         // vertices to presenting a properly shaded set of
         // pixels to the screen. Before that, however, we need
-        // to tell Vulkan about the framebuffer attachments that
-        // will be used while rendering: the object containing
-        // this information is called a "render pass".
+        // to tell Vulkan about the framebuffer attachments
+        // that will be used while rendering: the object
+        // containing this information is called a "render
+        // pass". The descriptor set layout, specifying the
+        // types of ressources accessed by the pipeline in
+        // order to be used in the shaders, is also created
+        // here.
         create_render_pass(&instance, &device, &mut data)?;
+        create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
         // The final step before actual rendering is to create
@@ -378,6 +388,7 @@ impl App {
 
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
+        self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
         self.device.destroy_buffer(self.data.index_buffer, None);
         self.device.free_memory(self.data.index_buffer_memory, None);
         self.device.destroy_buffer(self.data.vertex_buffer, None);
