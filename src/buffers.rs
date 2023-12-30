@@ -140,17 +140,41 @@ pub unsafe fn create_command_buffers(
         // GRAPHICS or COMPUTE pipeline.
         device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, data.pipeline);
 
-        // And, finally, draw the triangle. We first have to
-        // bind the vertex buffers containing the vertex data
-        // for our triangle, as well as the index buffer
+        // Before finally drawing the triangle, we first have
+        // to bind the vertex buffers containing the vertex
+        // data for our triangle, as well as the index buffer
         // containing the indices for each vertex in the
-        // buffer. The draw command takes the length of the
-        // index buffer, the number of instances (1 in our
-        // case, where we are not doing instaced rendering),
-        // the first vertex index in the vertex buffer (0, no
-        // offset) and the first instance index (same).
+        // buffer. The vertex buffer needs to be specified the
+        // first vertex input binding to be updated (0), the
+        // array of buffers to update (data.vertex_buffer) and
+        // the offsets in the buffers (0 here). The index
+        // buffer, apart from its data, takes an offset (0 too)
+        // and a type size (UINT16 in our case).
         device.cmd_bind_vertex_buffers(command_buffer, 0, &[data.vertex_buffer], &[0]);
         device.cmd_bind_index_buffer(command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        
+        // Then we can bind the descriptor sets holding the
+        // resources passed to the shaders like uniform
+        // buffers, specifying the pipeline point they will be
+        // used by (GRAPHICS), the pipeline layout, the first
+        // set to be bound (0) and the array of sets to bind
+        // (in our case the descriptor set attached to the
+        // current image). The last parameter is an array of
+        // offsets used by dynamic descriptors, which we will
+        // not use for now.
+        device.cmd_bind_descriptor_sets(
+            command_buffer, 
+            vk::PipelineBindPoint::GRAPHICS, 
+            data.pipeline_layout, 
+            0, 
+            &[data.descriptor_sets[i]],
+            &[]);
+        
+        // The final draw command takes the length of the index
+        // buffer, the number of instances (1 in our case,
+        // where we are not doing instanced rendering), the
+        // first vertex index in the vertex buffer (0, no
+        // offset) and the first instance index (same).
         device.cmd_draw_indexed(command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
 
         // The render pass can then be ended, and the command

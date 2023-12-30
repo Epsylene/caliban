@@ -6,7 +6,17 @@ use crate::{
     vertex::*,
     descriptors::*,
 };
-use std::collections::HashSet;
+
+use std::{
+    collections::HashSet,
+    time::Instant,
+    ptr::copy_nonoverlapping as memcpy,
+};
+
+use glam::{
+    Mat4, 
+    vec3
+};
 
 use winit::window::Window;
 use vulkanalia::{
@@ -51,9 +61,6 @@ pub struct AppData {
     //   which describe how they should be accessed
     // - Render pass: the render pass describing the different
     //   framebuffer attachments and their usage
-    // - Descriptor set layout: the layout of a descriptor set
-    //   object, a collection of opaque structures representing
-    //   a shader resource each
     // - Pipeline layout: the set of ressources that can be
     //   accessed by the pipeline
     // - Pipeline: the graphics pipeline, the succession of
@@ -62,8 +69,7 @@ pub struct AppData {
     //   render pass instance
     // - Command buffers: buffers containing commands which can
     //   be submitted to a queue for execution
-    // - Command pool: memory allocator for a set of command
-    //   buffers
+    // - Command pool: memory pool for a set of command buffers
     // - Semaphores: GPU-GPU synchronization primitive to insert
     //   a dependency within or accross command queue operations
     // - Fences: CPU-GPU synchronization primitive to insert a
@@ -73,6 +79,14 @@ pub struct AppData {
     // - Device memory: opaque handle to device memory
     // - Index buffer: buffer containing the indices for each
     //   vertex in the vertex buffer
+    // - Descriptor set layout: the layout of a descriptor set
+    //   object, a collection of opaque structures representing
+    //   a shader resource each
+    // - Descriptor sets: the actual descriptors sets bound to
+    //   the pipeline, one per swapchain image
+    // - Descriptor pool: memory pool for the descriptor sets
+    // - Uniform buffers: ressource buffers used for read-only
+    //   global data in shaders
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -84,7 +98,6 @@ pub struct AppData {
     pub swapchain_extent: vk::Extent2D,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub render_pass: vk::RenderPass,
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -98,6 +111,11 @@ pub struct AppData {
     pub vertex_buffer_memory: vk::DeviceMemory,
     pub index_buffer: vk::Buffer,
     pub index_buffer_memory: vk::DeviceMemory,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_sets: Vec<vk::DescriptorSet>,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub uniform_buffers: Vec<vk::Buffer>,
+    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
 }
 
 pub struct App {
@@ -118,6 +136,7 @@ pub struct App {
     pub device: Device,
     frame: usize,
     pub resized: bool,
+    start: Instant,
 }
 
 impl App {
@@ -181,13 +200,20 @@ impl App {
         // attachments specified during render pass creation;
         // the command pool, to allocate memory for the command
         // buffers; the vertex buffers and index buffers, to
-        // later populate vertex data for the GPU; and the
-        // command buffers (allocated in a command pool), to
-        // record them and submit them to the GPU.
+        // later populate vertex data for the GPU; the uniform
+        // buffers to send ressources to the shaders; the
+        // descriptor pool to allocate the descriptor sets
+        // these ressources are bound to; the actual
+        // descriptors sets; and the command buffers (allocated
+        // in a command pool), to record them and submit them
+        // to the GPU.
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
+        create_uniform_buffer(&instance, &device, &mut data)?;
+        create_descriptor_pool(&device, &mut data)?;
+        create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
         // To handle CPU-GPU and GPU-GPU synchronization, we
@@ -195,46 +221,7 @@ impl App {
         // semaphores.
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device, frame: 0, resized: false })
-    }
-
-    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
-        // Even with a fully functional swapchain, it is
-        // possible for the window surface to change such that
-        // the swapchain is no longer compatible with it (after
-        // a window resize, for example). The swapchain and all
-        // the objects that depend on it or the window must then
-        // be recreated. We will first call a function to wait
-        // on the device until all ressources are free to use,
-        // and destroy the swapchain before recreating it.
-        self.device.device_wait_idle()?;
-        self.destroy_swapchain();
-        
-        // Then, the swapchain is recreated. The images views
-        // are recreated because they depend on the swapchain
-        // images; the render pass is recreated because it
-        // depends on the format of the swapchain images; the
-        // pipeline is recreated because it defines viewport and
-        // scissor rectangle sizes (note that it is possible to
-        // define these as dynamic state to avoid redefining
-        // them); the framebuffers and command buffers also
-        // directly depend on the swapchain images.
-        create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
-        create_swapchain_image_views(&self.device, &mut self.data)?;
-        create_render_pass(&self.instance, &self.device, &mut self.data)?;
-        create_pipeline(&self.device, &mut self.data)?;
-        create_framebuffers(&self.device, &mut self.data)?;
-        create_command_buffers(&self.device, &mut self.data)?;
-        
-        // Lastly, we resize our list of fences for the new
-        // swapchain, since there is a possibility that there
-        // might be a different number of swapchain images after
-        // recreation.
-        self.data
-            .images_in_flight
-            .resize(self.data.swapchain_images.len(), vk::Fence::null());
-
-        Ok(())
+        Ok(Self { entry, instance, data, device, frame: 0, resized: false, start: Instant::now() })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
@@ -297,6 +284,12 @@ impl App {
         // the current frame, so we set the "image in flight"
         // fence to the "rendering" fence for this frame.
         self.data.images_in_flight[image_index] = self.data.rendering_fences[self.frame];
+
+        // When the image is signaled as available and set to
+        // the "render" state, we can also update the uniform
+        // buffer, since it means that the previous image has
+        // completed rendering.
+        self.update_uniform_buffer(image_index)?;
 
         // We can now configure the queue submit operation with
         // a submit info struct, containing:
@@ -386,6 +379,99 @@ impl App {
         Ok(())
     }
 
+    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
+        // When updating the MVP uniform buffer, we first take
+        // the current time (in seconds)...
+        let time = self.start.elapsed().as_secs_f32();
+
+        // ...then build a model matrix rotating around the Z
+        // axis with a pi/2 frequency...
+        let model = Mat4::from_axis_angle(
+            vec3(0.0, 0.0, 1.0), 
+            time * std::f32::consts::FRAC_PI_2);
+
+        // ...followed by a view matrix looking from above at
+        // (2,2,2)...
+        let view = Mat4::look_at_rh(
+            vec3(2.0, 2.0, 2.0), 
+            vec3(0.0, 0.0, 0.0), 
+            vec3(0.0, 0.0, 1.0));
+
+        // ...and the perspective projection matrix with a 45º
+        // FOV, an aspect ratio matching that of the window,
+        // and a near and far plane at 0.1 and 10.0.
+        let mut proj = Mat4::perspective_rh(
+            std::f32::consts::FRAC_PI_4, 
+            self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32, 
+            0.1, 
+            10.0
+        );
+
+        proj.y_axis.y *= -1.0;
+
+        // Those can then be combined in the MVP object...
+        let mvp = Mvp { model, view, proj };
+
+        // ...and mapped to the uniform buffer memory (that is,
+        // the uniform buffer in the device memory) for the
+        // current image in the swapchain...
+        let memory = self.device.map_memory(
+            self.data.uniform_buffers_memory[image_index],
+            0, 
+            std::mem::size_of::<Mvp>() as u64, 
+            vk::MemoryMapFlags::empty()
+        )?;
+
+        // ...and finally copied.
+        memcpy(&mvp, memory.cast(), 1);
+        self.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
+        
+        debug!("Updated uniform buffer.");
+        Ok(())
+    }
+
+    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
+        // Even with a fully functional swapchain, it is
+        // possible for the window surface to change such that
+        // the swapchain is no longer compatible with it (after
+        // a window resize, for example). The swapchain and all
+        // the objects that depend on it or the window must then
+        // be recreated. We will first call a function to wait
+        // on the device until all ressources are free to use,
+        // and destroy the swapchain before recreating it.
+        self.device.device_wait_idle()?;
+        self.destroy_swapchain();
+        
+        // Then, the swapchain is recreated. The images views
+        // are recreated because they depend on the swapchain
+        // images; the render pass is recreated because it
+        // depends on the format of the swapchain images; the
+        // pipeline is recreated because it defines viewport and
+        // scissor rectangle sizes (note that it is possible to
+        // define these as dynamic state to avoid redefining
+        // them); the framebuffers and command buffers also
+        // directly depend on the swapchain images.
+        create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
+        create_swapchain_image_views(&self.device, &mut self.data)?;
+        create_render_pass(&self.instance, &self.device, &mut self.data)?;
+        create_pipeline(&self.device, &mut self.data)?;
+        create_framebuffers(&self.device, &mut self.data)?;
+        create_uniform_buffer(&self.instance, &self.device, &mut self.data)?;
+        create_descriptor_pool(&self.device, &mut self.data)?;
+        create_descriptor_sets(&self.device, &mut self.data)?;
+        create_command_buffers(&self.device, &mut self.data)?;
+        
+        // Lastly, we resize our list of fences for the new
+        // swapchain, since there is a possibility that there
+        // might be a different number of swapchain images after
+        // recreation.
+        self.data
+            .images_in_flight
+            .resize(self.data.swapchain_images.len(), vk::Fence::null());
+
+        Ok(())
+    }
+
     pub unsafe fn destroy(&mut self) {
         self.destroy_swapchain();
         self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
@@ -418,6 +504,16 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
+
+        self.data.uniform_buffers
+            .iter()
+            .for_each(|&b| self.device.destroy_buffer(b, None));
+
+        self.data.uniform_buffers_memory
+            .iter()
+            .for_each(|&m| self.device.free_memory(m, None));
+
         self.data.framebuffers
             .iter()
             .for_each(|&f| self.device.destroy_framebuffer(f, None));
