@@ -8,6 +8,7 @@ mod buffers;
 mod vertex;
 mod descriptors;
 mod texture;
+mod commands;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

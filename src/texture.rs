@@ -8,6 +8,7 @@ use std::ptr::copy_nonoverlapping as memcpy;
 
 use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
+use log::info;
 
 unsafe fn create_texture_image(
     instance: &Instance,
@@ -72,6 +73,7 @@ unsafe fn create_texture_image(
     data.texture_image = tex_image;
     data.texture_image_memory = tex_image_memory;
 
+    info!("Texture image created.");
     Ok(())
 }
 
