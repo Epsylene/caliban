@@ -116,6 +116,8 @@ pub struct AppData {
     pub descriptor_pool: vk::DescriptorPool,
     pub uniform_buffers: Vec<vk::Buffer>,
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
+    pub texture_image: vk::Image,
+    pub texture_image_memory: vk::DeviceMemory,
 }
 
 pub struct App {

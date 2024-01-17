@@ -7,6 +7,7 @@ mod pipeline;
 mod buffers;
 mod vertex;
 mod descriptors;
+mod texture;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{
