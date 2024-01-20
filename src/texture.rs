@@ -1,13 +1,13 @@
 use crate::{
     app::AppData,
-    buffers::{create_buffer, find_memory_type},
+    buffers::{create_buffer, find_memory_type}, commands::{begin_single_command_batch, end_single_command_batch},
 };
 
 use std::fs::File;
 use std::ptr::copy_nonoverlapping as memcpy;
 
 use vulkanalia::prelude::v1_0::*;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use log::info;
 
 unsafe fn create_texture_image(
@@ -28,7 +28,7 @@ unsafe fn create_texture_image(
     let size = reader.info().raw_bytes() as u64;
     let (width, height) = reader.info().size();
 
-    // First, we create a staging buffer in host memory, that
+    // Then we create a staging buffer in host memory, that
     // will be used to initially hold the pixel data before
     // transfering it to the GPU.
     let (staging_buffer, staging_memory) = create_buffer(
@@ -55,7 +55,7 @@ unsafe fn create_texture_image(
     // Then, the image and its memory are created and bound
     // together with the `create_image()` function. For a
     // texture image, we want in particular a 32-bit SRGBA
-    // format, optimally tiled (memory packing), used as the
+    // format, optimally tiled (memory packed), used as the
     // destination of a transfer operation, sampled (to use in
     // shaders), and stored on the GPU.
     let (tex_image, tex_image_memory) = create_image(
@@ -72,6 +72,41 @@ unsafe fn create_texture_image(
 
     data.texture_image = tex_image;
     data.texture_image_memory = tex_image_memory;
+
+    // Then, the image is transitioned to a layout that is
+    // optimal for the GPU...
+    transition_image_layout(
+        device, 
+        data, 
+        data.texture_image, 
+        vk::Format::R8G8B8A8_SRGB, 
+        vk::ImageLayout::UNDEFINED, 
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL
+    )?;
+
+    // ...and the pixel data is copied into it.
+    copy_buffer_to_image(
+        device,
+        data,
+        staging_buffer,
+        data.texture_image,
+        width,
+        height,
+    )?;
+
+    // Finally, we need another transition to make the image
+    // ready for sampling.
+    transition_image_layout(
+        device, 
+        data, 
+        data.texture_image, 
+        vk::Format::R8G8B8A8_SRGB, 
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL, 
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    )?;
+
+    device.destroy_buffer(staging_buffer, None);
+    device.free_memory(staging_memory, None);
 
     info!("Texture image created.");
     Ok(())
@@ -154,4 +189,184 @@ unsafe fn create_image(
     device.bind_image_memory(image, image_memory, 0)?;
 
     Ok((image, image_memory))
+}
+
+unsafe fn transition_image_layout(
+    device: &Device,
+    data: &mut AppData,
+    image: vk::Image,
+    format: vk::Format,
+    old_layout: vk::ImageLayout,
+    new_layout: vk::ImageLayout,
+) -> Result<()> {
+    let command_buffer = begin_single_command_batch(device, data)?;
+
+    // Sometimes, the layout of an image has to changed in
+    // order to copy data from a buffer into it (tipically,
+    // changing from the initial UNDEFINED to the layout of the
+    // pixel data). One of the most common ways to perform
+    // layout transitions is using an "image memory barrier".
+    // In general, a pipeline barrier is used to synchronize
+    // access to resources in the pipeline, like ensuring that
+    // a write to a buffer completes before reading from it. An
+    // image memory barrier does this, but for an image layout
+    // transition. Before building the barrier, however, we
+    // need to define the access masks (how the resource is
+    // accessed in both sides of the barrier) and the pipeline
+    // stages masks (in what stages lie the two sides of the
+    // barrier).
+    let (
+        src_access_mask,
+        dst_access_mask,
+        src_stage_mask,
+        dst_stage_mask,
+    ) = match (old_layout, new_layout) {
+        // The first transition is from the UNDEFINED layout (a
+        // non-specified layout, the one of the pixel data in
+        // the staging buffer before copying, that can be
+        // safely discarded) to TRANSFER_DST_OPTIMAL (the
+        // optimal layout for the destination of a transfer
+        // operation):
+        // - Access masks: source has no special access flag,
+        // destination is a transfer write (write access in a
+        // copy operation, like the one we are doing between
+        // the staging buffer and the texture image)
+        // - Pipeline stage masks: source is TOP_OF_PIPE (the
+        // earliest possible one), and destination is TRANSFER
+        // (a pseudo-stage where transfer operations happen).
+        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => (
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::TRANSFER,
+        ),
+        // The second transition is to sample the texture for
+        // shaders, changing the layout from
+        // TRANSFER_DST_OPTIMAL to SHADER_READ_ONLY_OPTIMAL
+        // (optimal layout for a read-only access in shaders):
+        // - Access masks: source is a transfer write,
+        //   destination is a shader read access
+        // - Pipeline stage masks: source is TRANSFER,
+        //   destination is FRAGMENT_SHADER (we start at the
+        //   transfer pseudo-stage and end in the fragment
+        //   shader stage).
+        (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
+            vk::AccessFlags::TRANSFER_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        ),
+        // In all other cases, return an error.
+        _ => return Err(anyhow!("Unsupported layout transition!")),
+    };
+    
+    // Apart from the layout, the queue family itself might be
+    // changed, so we need to explicitly tell the barrier to
+    // ignore these fields. Secondly, a subresource range
+    // specifying the part of the image that is affected by the
+    // transition is specified. And thirdly, because barriers
+    // are primarily used for synchronization purposes, we must
+    // specify which types of operations involving the resource
+    // mut happen before the barrier, and which must happen
+    // after.
+    let barrier = vk::ImageMemoryBarrier::builder()
+        .old_layout(old_layout)
+        .new_layout(new_layout)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .src_access_mask(src_access_mask)
+        .dst_access_mask(dst_access_mask);
+
+    // Then, the barrier is submitted using the corresponding
+    // command, which takes:
+    //  - the command buffer to submit the barrier to;
+    //  - the source stage in which the barrier is submitted
+    //    (the stage in which the operations that must happen
+    //    before the barrier are executed);
+    //  - the destination stage in which operations will wait
+    //    on the barrier;
+    //  - the dependency flag, specifying how execution and
+    //    memory dependencies are formed. In Vulkan 1.0, this
+    //    is either the empty flag or BY_REGIONS, meaning that
+    //    the dependencies between framebuffer-space stages
+    //    (the pipeline stages that operate or depend on the
+    //    framebuffer, namely the fragment shader, the early
+    //    and late fragment tests, and the color attachment
+    //    stages) are either framebuffer-global (dependent on
+    //    the whole set of stages) or split into multiple
+    //    framebuffer-local dependencies;
+    //  - the memory barriers, buffer memory barriers and image
+    //    memory barriers, which are the sets of barriers
+    //    acting between the two stages.
+    device.cmd_pipeline_barrier(
+        command_buffer, 
+        src_stage_mask,
+        dst_stage_mask,
+        vk::DependencyFlags::empty(),
+        &[] as &[vk::MemoryBarrier],
+        &[] as &[vk::BufferMemoryBarrier], 
+        &[barrier]);
+
+    end_single_command_batch(device, data, command_buffer)?;
+    
+    Ok(())
+}
+
+unsafe fn copy_buffer_to_image(
+    device: &Device,
+    data: &AppData,
+    buffer: vk::Buffer,
+    image: vk::Image,
+    width: u32,
+    height: u32,
+) -> Result<()> {
+    let command_buffer = begin_single_command_batch(device, data)?;
+
+    // Just like with buffer copies, we need to specify which
+    // part of the buffer (the "region") is going to be copied
+    // to which part of the image (the "subresource").
+    let subresource = vk::ImageSubresourceLayers::builder()
+    .aspect_mask(vk::ImageAspectFlags::COLOR)
+    .mip_level(0)
+    .base_array_layer(0)
+    .layer_count(1);
+
+    // The row length and image height are used to define the
+    // data layout in buffer memory. For example, if row length
+    // is 0, then the pixels are tightly packed, and if it is
+    // non-zero, then each row of pixels is padded to match the
+    // given length.
+    let region = vk::BufferImageCopy::builder()
+        .buffer_offset(0)
+        .buffer_row_length(0)
+        .buffer_image_height(0)
+        .image_subresource(subresource)
+        .image_offset(vk::Offset3D { x: 0, y: 0, z: 0})
+        .image_extent(vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        });
+
+    // Then the buffer can be copied to the image, specifying
+    // which layout the image is currently using.
+    device.cmd_copy_buffer_to_image(
+        command_buffer,
+        buffer,
+        image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        &[region],
+    );
+
+    end_single_command_batch(device, data, command_buffer)?;
+    
+    Ok(())
 }

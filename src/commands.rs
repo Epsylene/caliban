@@ -187,7 +187,7 @@ pub unsafe fn create_command_buffers(
     Ok(())
 }
 
-pub unsafe fn begin_single_command(
+pub unsafe fn begin_single_command_batch(
     device: &Device,
     data: &AppData,
 ) -> Result<vk::CommandBuffer> {
@@ -210,7 +210,7 @@ pub unsafe fn begin_single_command(
     Ok(command_buffer)
 }
 
-pub unsafe fn end_single_command(
+pub unsafe fn end_single_command_batch(
     device: &Device,
     data: &AppData,
     command_buffer: vk::CommandBuffer,

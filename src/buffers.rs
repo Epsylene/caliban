@@ -1,7 +1,7 @@
 use crate::{
     app::AppData,
     devices::SuitabilityError, 
-    commands::{begin_single_command, end_single_command},
+    commands::{begin_single_command_batch, end_single_command_batch},
 };
 
 use vulkanalia::prelude::v1_0::*;
@@ -78,7 +78,7 @@ pub unsafe fn copy_buffer(
     // with a command buffer. We will then first allocate and
     // begin a temporary command buffer for the transfer
     // operation.
-    let command_buffer = begin_single_command(device, data)?;
+    let command_buffer = begin_single_command_batch(device, data)?;
 
     // We can then actually copy the data from the source buffer
     // to the destination buffer. We can define one or several
@@ -89,7 +89,7 @@ pub unsafe fn copy_buffer(
     
     // Then, the command buffer can be ended to be submitted
     // for execution.
-    end_single_command(device, data, command_buffer)?;
+    end_single_command_batch(device, data, command_buffer)?;
 
     Ok(())
 }
