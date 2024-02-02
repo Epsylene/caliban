@@ -52,6 +52,13 @@ unsafe fn check_physical_device(
     // Then we can check if the device supports all the required
     // extensions.
     check_physical_device_extensions(instance, physical_device)?;
+
+    // Likewise, we can check if the device supports the
+    // included optional features.
+    let features = instance.get_physical_device_features(physical_device);
+    if features.sampler_anisotropy != vk::TRUE {
+        return Err(anyhow!(SuitabilityError("Device does not support anisotropic filtering.")));
+    }
     
     // Finally, we can check if the device's swapchain support
     // is sufficient. We want to at least have one supported
@@ -158,9 +165,10 @@ pub unsafe fn create_logical_device(
         extensions.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
     }
 
-    // We can then specify the set of device features we are
-    // going to use. Nothing special for now.
-    let features = vk::PhysicalDeviceFeatures::builder();
+    // We can then specify the set of optional device features
+    // we want to have, such as anisotropic filtering. 
+    let features = vk::PhysicalDeviceFeatures::builder()
+        .sampler_anisotropy(true);
 
     // The device info struct combines all the information we
     // have gathered so far.

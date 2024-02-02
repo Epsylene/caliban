@@ -9,6 +9,7 @@ mod vertex;
 mod descriptors;
 mod texture;
 mod commands;
+mod image;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

@@ -1,10 +1,11 @@
 use crate::{
-    devices::*,
+    commands::*, 
+    descriptors::*, 
+    devices::*, 
+    pipeline::*, 
     swapchain::*, 
-    pipeline::*,
-    commands::*,
-    vertex::*,
-    descriptors::*,
+    texture::*, 
+    vertex::*
 };
 
 use std::{
@@ -87,6 +88,7 @@ pub struct AppData {
     // - Descriptor pool: memory pool for the descriptor sets
     // - Uniform buffers: ressource buffers used for read-only
     //   global data in shaders
+    // - Texture image: image used as a texture in the shaders
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -118,6 +120,8 @@ pub struct AppData {
     pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
     pub texture_image: vk::Image,
     pub texture_image_memory: vk::DeviceMemory,
+    pub texture_image_view: vk::ImageView,
+    pub texture_sampler: vk::Sampler,
 }
 
 pub struct App {
@@ -201,16 +205,19 @@ impl App {
         // the framebuffers, which we use to bind the
         // attachments specified during render pass creation;
         // the command pool, to allocate memory for the command
-        // buffers; the vertex buffers and index buffers, to
-        // later populate vertex data for the GPU; the uniform
-        // buffers to send ressources to the shaders; the
-        // descriptor pool to allocate the descriptor sets
-        // these ressources are bound to; the actual
-        // descriptors sets; and the command buffers (allocated
-        // in a command pool), to record them and submit them
-        // to the GPU.
+        // buffers; the texture image and its view; the vertex
+        // buffers and index buffers, to later populate vertex
+        // data for the GPU; the uniform buffers to send
+        // ressources to the shaders; the descriptor pool to
+        // allocate the descriptor sets these ressources are
+        // bound to; the actual descriptors sets; and the
+        // command buffers (allocated in a command pool), to
+        // record them and submit them to the GPU.
         create_framebuffers(&device, &mut data)?;
         create_command_pool(&instance, &device, &mut data)?;
+        create_texture_image(&instance, &device, &mut data)?;
+        create_texture_image_view(&device, &mut data)?;
+        create_texture_sampler(&device, &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffer(&instance, &device, &mut data)?;
@@ -478,6 +485,8 @@ impl App {
         self.destroy_swapchain();
 
         self.device.destroy_image(self.data.texture_image, None);
+        self.device.destroy_image_view(self.data.texture_image_view, None);
+        self.device.destroy_sampler(self.data.texture_sampler, None);
         self.device.free_memory(self.data.texture_image_memory, None);
         self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
         self.device.destroy_buffer(self.data.index_buffer, None);
