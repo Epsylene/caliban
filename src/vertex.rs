@@ -9,17 +9,19 @@ use vulkanalia::{
     vk::HasBuilder, 
     prelude::v1_0::*,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use log::info;
 use lazy_static::lazy_static;
+
 use std::ptr::copy_nonoverlapping as memcpy;
+use std::mem::size_of as sizeof;
 
 lazy_static! {
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(Vec2::new(-0.5, -0.5), Vec3::new(1.0, 0.0, 0.0)),
-        Vertex::new(Vec2::new(0.5, -0.5), Vec3::new(0.0, 1.0, 0.0)),
-        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 0.0, 1.0)),
-        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 0.0)),
+        Vertex::new(Vec2::new(-0.5, -0.5), Vec3::new(1.0, 0.0, 0.0), Vec2::new(1.0, 0.0)),
+        Vertex::new(Vec2::new(0.5, -0.5), Vec3::new(0.0, 1.0, 0.0), Vec2::new(0.0, 0.0)),
+        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 0.0, 1.0), Vec2::new(0.0, 1.0)),
+        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 0.0), Vec2::new(1.0, 1.0)),
     ];
 }
 
@@ -29,11 +31,12 @@ pub const INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
 pub struct Vertex {
     pos: Vec2,
     color: Vec3,
+    texture: Vec2,
 }
 
 impl Vertex {
-    pub fn new(pos: Vec2, color: Vec3) -> Self {
-        Self { pos, color }
+    pub fn new(pos: Vec2, color: Vec3, texture: Vec2) -> Self {
+        Self { pos, color, texture }
     }
 
     pub fn binding_description() -> vk::VertexInputBindingDescription {
@@ -52,13 +55,13 @@ impl Vertex {
         //    instance.
         vk::VertexInputBindingDescription::builder()
             .binding(0)
-            .stride(std::mem::size_of::<Vertex>() as u32)
+            .stride(sizeof::<Vertex>() as u32)
             .input_rate(vk::VertexInputRate::VERTEX)
             .build()
     }
 
-    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 2] {
-        // The second struct(s) is the vertex attribute
+    pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 3] {
+        // The second struct is the vertex attribute
         // description. Each attribute description struct
         // describes how to extract a vertex attribute from a
         // chunk of vertex data originating from a binding
@@ -91,10 +94,21 @@ impl Vertex {
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(std::mem::size_of::<Vec2>() as u32)
+            .offset(sizeof::<Vec2>() as u32)
             .build();
 
-        [pos, color]
+        // The texture attribute is like a color attribute but
+        // with only 2 components (R32G32_SFLOAT format) and an
+        // offset the size of the position and color
+        // attributes.
+        let texture = vk::VertexInputAttributeDescription::builder()
+            .binding(0)
+            .location(2)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset((sizeof::<Vec2>() + sizeof::<Vec3>()) as u32)
+            .build();
+
+        [pos, color, texture]
     }
 }
 
@@ -118,7 +132,7 @@ pub unsafe fn create_vertex_buffer(
     // be visible by all devices). It will also we marked as a
     // TRANSFER_SRC buffer, meaning that it can be used as the
     // source of a transfer command (like a copy command).
-    let size = (std::mem::size_of::<Vertex>() * VERTICES.len()) as u64;
+    let size = (sizeof::<Vertex>() * VERTICES.len()) as u64;
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance, 
         device, 
@@ -191,10 +205,10 @@ pub unsafe fn create_index_buffer(
     device: &Device,
     data: &mut AppData,
 ) -> Result<()> {
-    // The index buffer is created in the same way as the vertex
-    // buffer: first create a staging buffer in host-visible
-    // memory (accesible to the CPU)...
-    let size = (std::mem::size_of::<u16>() * INDICES.len()) as u64;
+    // The index buffer is created in the same way as the
+    // vertex buffer: first create a staging buffer in
+    // host-visible memory (accesible to the CPU)...
+    let size = (sizeof::<u16>() * INDICES.len()) as u64;
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance, 
         device, 
