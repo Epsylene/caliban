@@ -2,6 +2,7 @@ use crate::{
     app::AppData,
     shaders::*,
     vertex::Vertex,
+    depth::get_depth_format,
 };
 
 use vulkanalia::prelude::v1_0::*;
@@ -15,28 +16,32 @@ pub unsafe fn create_framebuffers(
     data: &mut AppData,
 ) -> Result<()> {
     // Each GPU frame can have a number of attachments
-    // associated to it, like color, depth, etc. The render pass
-    // describes the nature of these attachments, but the object
-    // used to actually bind them to an image is the
+    // associated to it, like color, depth, etc. The render
+    // pass describes the nature of these attachments, but the
+    // object used to actually bind them to an image is the
     // framebuffer. In other words, a framebuffer provides the
     // attachments that a render pass needs while rendering.
     // Attachments can be shared between framebuffers: for
     // example, two framebuffers could have two different color
     // buffer attachments (representing two different swapchain
-    // frames) but only one depth buffer (which does not need to
-    // be recreated for each frame).
+    // frames) but only one depth buffer (which does not need
+    // to be recreated for each frame).
     data.framebuffers = data
         .swapchain_image_views
         .iter()
-        .map(|i| {
-            // We only have one attachment per framebuffer for
-            // now, because we are only rendering to the color
-            // attachment. However, since we need to be able to
-            // write to each image independently (because we
-            // don't know in advance which frame will be
+        .map(|&i| {
+            // We only have two attachments per framebuffer,
+            // one for the color component and one for depth
+            // component. However, since we need to be able to
+            // write to each frame independently (because we
+            // don't know in advance which one will be
             // presented at a time), we have to create one
-            // framebuffer for each image in the swapchain.
-            let images = &[*i];
+            // framebuffer for each image in the swapchain
+            // (that is, for each color-depth pair). The depth
+            // attachment can be shared between all the images
+            // since there is only one subpass running at a
+            // time due to our semaphores.
+            let images = &[i, data.depth_image_view];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
                 .attachments(images)
@@ -104,6 +109,24 @@ pub unsafe fn create_render_pass(
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
+    // The second attachment we are defining is the depth
+    // buffer, which is used to store the depth and stencil
+    // information of the fragments. This attachment is much
+    // like the color attachment, but with a different format
+    // and a DEPTH_STENCIL_ATTACHMENT_OPTIMAL layout.
+    // Furthermore, the store information is set to DONT_CARE,
+    // because it will not be used after rendering has
+    // finished.
+    let depth_stencil_attachment = vk::AttachmentDescription::builder()
+        .format(get_depth_format(instance, data)?)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
     // Render passes consist of multiple subpasses, subsequent
     // rendering operations that depend on the contents of
     // framebuffers in previous passes (for example a sequence
@@ -115,27 +138,32 @@ pub unsafe fn create_render_pass(
     // AttachmentReference structs, which specify the index of
     // the attachment in the render pass (referenced in the
     // fragment shader with the "layout(location = 0)"
-    // directive) and the layout of the attachment. Since our
-    // render pass consists of a single subpass on a color
-    // buffer attachment, the index is 0 and the layout is
-    // COLOR_ATTACHMENT_OPTIMAL.
+    // directive) and the layout of the attachment. Our render
+    // pass consists of a single subpass with two attachments,
+    // color...
     let color_attachment_ref = vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    
-    // The subpass is explicitly stated to be a graphics subpass
-    // (as opposed to a compute subpass, for example), and the
-    // array of color attachments is passed to it. There can
-    // also be input attachments (attachments read from a
-    // shader), resolve attachments (used for multisampling
-    // color attachments), depth stencil attachments (for depth
-    // and stencil data) and preserve attachments (attachments
-    // which are not used by the subpass, but must be preserved
-    // for later use).
+
+    // ...and depth.
+    let depth_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    // The subpass is explicitly stated to be a graphics
+    // subpass (as opposed to a compute subpass, for example),
+    // and the color and depth attachments are passed to it.
+    // There can also be input attachments (attachments read
+    // from a shader), resolve attachments (used for
+    // multisampling color attachments), depth stencil
+    // attachments (for depth and stencil data) and preserve
+    // attachments (attachments which are not used by the
+    // subpass, but must be preserved for later use).
     let color_attachments = &[color_attachment_ref];
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(color_attachments);
+        .color_attachments(color_attachments)
+        .depth_stencil_attachment(&depth_attachment_ref);
 
     // Subpass dependencies specify memory and execution
     // dependencies between subpasses. Although we have only a
@@ -147,23 +175,28 @@ pub unsafe fn create_render_pass(
     //  - A source and destination stages, both
     //    COLOR_ATTACHMENT_OUTPUT (final color values, after
     //    blending, since the image we want to present during
-    //    our subpass is the final one in the pipeline)
+    //    our subpass is the final one in the pipeline) or
+    //    EARLY_FRAGMENT_TESTS (for the depth attachment);
     //  - A source and destination access mask. The source has
     //    no access flags, while the destination is marked as
-    //    COLOR_ATTACHMENT_WRITE: these settings prevent the
-    //    transition from happening until it's actually
-    //    necessary (and allowed).
+    //    COLOR_ATTACHMENT_WRITE or
+    //    DEPTH_STENCIL_ATTACHMENT_WRITE: these settings
+    //    prevent the transition from happening until it's
+    //    actually necessary (and allowed).
     let dependency = vk::SubpassDependency::builder()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+            | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+            | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE);
     
     // The render pass info struct can then finally be created,
-    // containing both the attachments and the subpasses.
-    let attachments = &[color_attachment];
+    // containing both the attachments and the subpass.
+    let attachments = &[color_attachment, depth_stencil_attachment];
     let subpasses = &[subpass];
     let dependencies = &[dependency];
     let info = vk::RenderPassCreateInfo::builder()
@@ -388,6 +421,25 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .module(frag_module)
         .name(b"main\0");
 
+    // Next come the depth and stencil tests. The depth test
+    // compares the depth value of the new fragment with the
+    // value stored in the depth buffer, and discards the
+    // fragment if it is behind the existing one. The stencil
+    // test operates on a similar principle, using the values
+    // of the stencil buffer as a mask to discard fragments. We
+    // want to enable the depth test with the LESS comparison
+    // (that is, discard one of the two fragments if it is
+    // farther away), but not the depth bounds test (that
+    // compares fragments against two given reference values,
+    // on top of the one in the buffer), nor the stencil test
+    // (for now).
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_bounds_test_enable(false)
+        .stencil_test_enable(false);
+
     // The final stage is color blending. Since there is already
     // a color in the framebuffer (from the previous frame), we
     // need to choose how to combine it with the new color
@@ -438,8 +490,8 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     // push constants (small bunches of data sent to a shader),
     // are described with a pipeline layout object. In our
     // case, we only have a single descriptor set, which
-    // contains a single uniform buffer for the MVP
-    // transformation.
+    // contains one uniform buffer for the MVP transformation
+    // and a sampler for the texture.
     let descriptor_set_layouts = &[data.descriptor_set_layout];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
         .set_layouts(descriptor_set_layouts);
@@ -473,6 +525,7 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterization_state)
         .multisample_state(&multisample_state)
+        .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blend_state)
         .layout(data.pipeline_layout)
         .render_pass(data.render_pass)

@@ -10,6 +10,7 @@ mod descriptors;
 mod texture;
 mod commands;
 mod image;
+mod depth;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

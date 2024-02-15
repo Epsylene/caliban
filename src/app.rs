@@ -5,7 +5,8 @@ use crate::{
     pipeline::*, 
     swapchain::*, 
     texture::*, 
-    vertex::*
+    vertex::*,
+    depth::*,
 };
 
 use std::{
@@ -89,6 +90,9 @@ pub struct AppData {
     // - Uniform buffers: ressource buffers used for read-only
     //   global data in shaders
     // - Texture image: image used as a texture in the shaders
+    // - Texture sampler: sampler object used to sample a
+    //   texture
+    // - Depth image: buffer used for depth testing
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -122,6 +126,9 @@ pub struct AppData {
     pub texture_image_memory: vk::DeviceMemory,
     pub texture_image_view: vk::ImageView,
     pub texture_sampler: vk::Sampler,
+    pub depth_image: vk::Image,
+    pub depth_image_memory: vk::DeviceMemory,
+    pub depth_image_view: vk::ImageView,
 }
 
 pub struct App {
@@ -202,19 +209,22 @@ impl App {
         create_pipeline(&device, &mut data)?;
 
         // The final step before actual rendering is to create
-        // the framebuffers, which we use to bind the
-        // attachments specified during render pass creation;
         // the command pool, to allocate memory for the command
-        // buffers; the texture image and its view; the vertex
-        // buffers and index buffers, to later populate vertex
-        // data for the GPU; the uniform buffers to send
-        // ressources to the shaders; the descriptor pool to
-        // allocate the descriptor sets these ressources are
-        // bound to; the actual descriptors sets; and the
-        // command buffers (allocated in a command pool), to
-        // record them and submit them to the GPU.
-        create_framebuffers(&device, &mut data)?;
+        // buffers; the depth objects (depth buffer and related
+        // objects) to provide depth information to the scene;
+        // the texture image and its view; the framebuffers,
+        // which we use to bind the attachments specified
+        // during render pass creation; the vertex buffers and
+        // index buffers, to later populate vertex data for the
+        // GPU; the uniform buffers to send ressources to the
+        // shaders; the descriptor pool to allocate the
+        // descriptor sets these ressources are bound to; the
+        // actual descriptors sets; and the command buffers
+        // (allocated in a command pool), to record them and
+        // submit them to the GPU.
         create_command_pool(&instance, &device, &mut data)?;
+        create_depth_objects(&instance, &device, &mut data)?;
+        create_framebuffers(&device, &mut data)?;
         create_texture_image(&instance, &device, &mut data)?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
@@ -455,15 +465,17 @@ impl App {
         // are recreated because they depend on the swapchain
         // images; the render pass is recreated because it
         // depends on the format of the swapchain images; the
-        // pipeline is recreated because it defines viewport and
-        // scissor rectangle sizes (note that it is possible to
-        // define these as dynamic state to avoid redefining
-        // them); the framebuffers and command buffers also
-        // directly depend on the swapchain images.
+        // pipeline is recreated because it defines viewport
+        // and scissor rectangle sizes (note that it is
+        // possible to define these as dynamic state to avoid
+        // redefining them); depth objects, framebuffers and
+        // uniform buffers can then be recreated, and finally
+        // descriptors and command buffers.
         create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
         create_swapchain_image_views(&self.device, &mut self.data)?;
         create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
+        create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffer(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
@@ -518,8 +530,15 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        // Depth image
+        self.device.destroy_image_view(self.data.depth_image_view, None);
+        self.device.destroy_image(self.data.depth_image, None);
+        self.device.free_memory(self.data.depth_image_memory, None);
+        
+        // Descriptor pool
         self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
 
+        // Uniform buffers
         self.data.uniform_buffers
             .iter()
             .for_each(|&b| self.device.destroy_buffer(b, None));
@@ -528,19 +547,23 @@ impl App {
             .iter()
             .for_each(|&m| self.device.free_memory(m, None));
 
+        // Framebuffers
         self.data.framebuffers
             .iter()
             .for_each(|&f| self.device.destroy_framebuffer(f, None));
 
+        // Command buffers, pipeline, render pass
         self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
         
+        // Swapchain image views
         self.data.swapchain_image_views
             .iter()
             .for_each(|&view| self.device.destroy_image_view(view, None));
         
+        // Swapchain
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
 
         info!("Destroyed the swapchain and related objects.");

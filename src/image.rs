@@ -11,6 +11,7 @@ pub unsafe fn create_image_view(
     device: &Device,
     image: vk::Image,
     format: vk::Format,
+    aspects: vk::ImageAspectFlags,
 ) -> Result<vk::ImageView> {
     // Images in Vulkan are not accessed as such, but through
     // what are called "image views", which add level of
@@ -31,8 +32,7 @@ pub unsafe fn create_image_view(
     // the image should be accessed, among other things:
     // - aspect_mask: the part of the image data (the image
     //   aspect) to be accessed (one image could contain both
-    //   RGB data and depth info bits, for example). In this
-    //   case, we want the color bits of the image;
+    //   RGB data and depth info bits, for example);
     // - base_mip_level: the first accessible mipmap level
     //   (here 0, since we don't use mipmapping yet);
     // - level_count: the number of accessible mipmap levels;
@@ -41,7 +41,7 @@ pub unsafe fn create_image_view(
     //   stereoscopic rendering);
     // - layer_count: the number of accessible array layers.
     let subresource_range = vk::ImageSubresourceRange::builder()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .aspect_mask(aspects)
         .base_mip_level(0)
         .level_count(1)
         .base_array_layer(0)
@@ -152,7 +152,7 @@ pub unsafe fn transition_image_layout(
 ) -> Result<()> {
     let command_buffer = begin_single_command_batch(device, data)?;
 
-    // Sometimes, the layout of an image has to changed in
+    // Sometimes, the layout of an image has to be changed in
     // order to copy data from a buffer into it (tipically,
     // changing from the initial UNDEFINED to the layout of the
     // pixel data). One of the most common ways to perform
@@ -207,6 +207,24 @@ pub unsafe fn transition_image_layout(
             vk::PipelineStageFlags::TRANSFER,
             vk::PipelineStageFlags::FRAGMENT_SHADER,
         ),
+        // In the case of a depth attachment, the layout
+        // transition is from UNDEFINED to
+        // DEPTH_STENCIL_ATTACHMENT, with:
+        // - Access masks: the result of the transition is a
+        //   read/write operation on the depth/stencil
+        //   attachment
+        // - Pipeline stage masks: the depth buffer is read
+        //   from to perform depth tests to see if a fragment
+        //   is visible (EARLY_FRAGMENT_TESTS stage), and then
+        //   is written when a new fragment is drawn
+        //   (LATE_FRAGMENT_TESTS). Thus, the destination of
+        //   the barrier is the earlier stage.
+        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => (
+            vk::AccessFlags::empty(),
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        ),
         // In all other cases, return an error.
         _ => return Err(anyhow!("Unsupported layout transition!")),
     };
@@ -227,7 +245,23 @@ pub unsafe fn transition_image_layout(
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .image(image)
         .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
+            aspect_mask: {
+                // For the aspect mask, if we are dealing with
+                // a depth attachment, we want to match the
+                // given image format depending on whether it
+                // contains a stencil component or not.
+                if new_layout == vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL {
+                    match format {
+                        vk::Format::D32_SFLOAT_S8_UINT | vk::Format::D24_UNORM_S8_UINT 
+                            => vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+                        _ => vk::ImageAspectFlags::DEPTH
+                    }
+                // For color attachments, we just want the
+                // color aspect flag.
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                }
+            },
             base_mip_level: 0,
             level_count: 1,
             base_array_layer: 0,
@@ -320,4 +354,42 @@ pub unsafe fn copy_buffer_to_image(
     end_single_command_batch(device, data, command_buffer)?;
     
     Ok(())
+}
+
+pub unsafe fn get_supported_format(
+    instance: &Instance,
+    data: &AppData,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Result<vk::Format> {
+    // For each swapchain image, texture, depth component, etc,
+    // there are several possible formats to choose from. We
+    // will just search for a format to use that is supported
+    // by the device and has the desired features.
+    candidates
+        .iter()
+        .cloned()
+        .find(|&f| {
+            // We first query the properties of the given
+            // format which are present in the physical device.
+            let properties = instance.get_physical_device_format_properties(
+                data.physical_device, 
+                f
+            );
+
+            // There are 3 of these properties: linear tiling,
+            // optimal tiling, and buffer features (meaning,
+            // "is the format supported for this device with
+            // linear tiling/optimal tiling/buffers?"). We are
+            // interested in the first two, so we check for
+            // each if the given format property contains the
+            // desired features.
+            match tiling {
+                vk::ImageTiling::LINEAR => properties.linear_tiling_features.contains(features),
+                vk::ImageTiling::OPTIMAL => properties.optimal_tiling_features.contains(features),
+                _ => false
+            }
+        })
+        .ok_or_else(|| anyhow!("Failed to find supported format"))
 }

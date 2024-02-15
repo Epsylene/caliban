@@ -1,10 +1,12 @@
-
 use crate::{
     app::AppData,
     buffers::{create_buffer, copy_buffer},
 };
 
-use glam::{Vec2, Vec3};
+use glam::{
+    Vec2, vec2, 
+    Vec3, vec3
+};
 use vulkanalia::{
     vk::HasBuilder, 
     prelude::v1_0::*,
@@ -18,24 +20,70 @@ use std::mem::size_of as sizeof;
 
 lazy_static! {
     static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(Vec2::new(-0.5, -0.5), Vec3::new(1.0, 0.0, 0.0), Vec2::new(1.0, 0.0)),
-        Vertex::new(Vec2::new(0.5, -0.5), Vec3::new(0.0, 1.0, 0.0), Vec2::new(0.0, 0.0)),
-        Vertex::new(Vec2::new(0.5, 0.5), Vec3::new(0.0, 0.0, 1.0), Vec2::new(0.0, 1.0)),
-        Vertex::new(Vec2::new(-0.5, 0.5), Vec3::new(0.0, 0.0, 0.0), Vec2::new(1.0, 1.0)),
+        Vertex::new(
+            vec3(-0.5, -0.5, 0.0), 
+            vec3(1.0, 0.0, 0.0), 
+            vec2(1.0, 0.0)
+        ),
+
+        Vertex::new(
+            vec3(0.5, -0.5, 0.0), 
+            vec3(0.0, 1.0, 0.0), 
+            vec2(0.0, 0.0)
+        ),
+
+        Vertex::new(
+            vec3(0.5, 0.5, 0.0), 
+            vec3(0.0, 0.0, 1.0), 
+            vec2(0.0, 1.0)
+        ),
+
+        Vertex::new(
+            vec3(-0.5, 0.5, 0.0), 
+            vec3(0.0, 0.0, 0.0), 
+            vec2(1.0, 1.0)
+        ),
+
+        Vertex::new(
+            vec3(-0.5, -0.5, -0.5), 
+            vec3(1.0, 0.0, 0.0), 
+            vec2(1.0, 0.0)
+        ),
+
+        Vertex::new(
+            vec3(0.5, -0.5, -0.5), 
+            vec3(0.0, 1.0, 0.0), 
+            vec2(0.0, 0.0)
+        ),
+
+        Vertex::new(
+            vec3(0.5, 0.5, -0.5), 
+            vec3(0.0, 0.0, 1.0), 
+            vec2(0.0, 1.0)
+        ),
+
+        Vertex::new(
+            vec3(-0.5, 0.5, -0.5), 
+            vec3(0.0, 0.0, 0.0), 
+            vec2(1.0, 1.0)
+        ),
     ];
 }
 
-pub const INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
+pub const INDICES: &[u16] = &[
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4,
+];
 
 #[repr(C)]
 pub struct Vertex {
-    pos: Vec2,
+    pos: Vec3,
     color: Vec3,
     texture: Vec2,
 }
 
 impl Vertex {
-    pub fn new(pos: Vec2, color: Vec3, texture: Vec2) -> Self {
+    pub fn new(pos: Vec3, color: Vec3, texture: Vec2) -> Self {
         Self { pos, color, texture }
     }
 
@@ -74,15 +122,16 @@ impl Vertex {
         //    shader input location number for this attribute
         //    (the x in 'layout(location = x)')
         //  - the format of the attribute data, precising its
-        //    size and type (a 2D position is a vec2 of signed
-        //    floats, for example, so a R32G32_SFLOAT format)
+        //    size and type (a 3D position is a vec3 of signed
+        //    floats, for example, so a R32G32B32_SFLOAT
+        //    format)
         //  - the byte offset of the first element of the
         //    attribute relative to the beginning of the vertex
         //    data.
         let pos = vk::VertexInputAttributeDescription::builder()
             .binding(0)
             .location(0)
-            .format(vk::Format::R32G32_SFLOAT)
+            .format(vk::Format::R32G32B32_SFLOAT)
             .offset(0)
             .build();
 
@@ -94,7 +143,7 @@ impl Vertex {
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
-            .offset(sizeof::<Vec2>() as u32)
+            .offset(sizeof::<Vec3>() as u32)
             .build();
 
         // The texture attribute is like a color attribute but
@@ -105,7 +154,7 @@ impl Vertex {
             .binding(0)
             .location(2)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset((sizeof::<Vec2>() + sizeof::<Vec3>()) as u32)
+            .offset((sizeof::<Vec3>() + sizeof::<Vec3>()) as u32)
             .build();
 
         [pos, color, texture]

@@ -108,16 +108,26 @@ pub unsafe fn create_command_buffers(
             .offset(vk::Offset2D::default())
             .extent(data.swapchain_extent);
 
-        // ...the clear color (black)...
+        // ...the clear color for the color attachment
+        // (black)...
         let color_clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
             },
         };
 
-        // ...and filling the info struct. The render pass can
-        // then begin with the corresponding command.
-        let clear_values = &[color_clear_value];
+        // ...and for the depth (1.0, the far view plane) and
+        // stencil (0, the discard value) attachment...
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        // ...and finally filling the info struct. The render
+        // pass can then begin with the corresponding command.
+        let clear_values = &[color_clear_value, depth_clear_value];
         let info = vk::RenderPassBeginInfo::builder()
             .render_pass(data.render_pass)
             .framebuffer(data.framebuffers[i])

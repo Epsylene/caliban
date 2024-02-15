@@ -123,6 +123,7 @@ pub unsafe fn create_texture_image_view(
         device,
         data.texture_image,
         vk::Format::R8G8B8A8_SRGB,
+        vk::ImageAspectFlags::COLOR,
     )?;
 
     info!("Texture image view created.");

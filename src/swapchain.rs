@@ -158,7 +158,12 @@ pub unsafe fn create_swapchain_image_views(
     data.swapchain_image_views = data
         .swapchain_images
         .iter()
-        .map(|&i| create_image_view(device, i, data.swapchain_format))
+        .map(|&i| create_image_view(
+            device, 
+            i, 
+            data.swapchain_format, 
+            vk::ImageAspectFlags::COLOR
+        ))
         .collect::<Result<Vec<_>, _>>()?;
 
     info!("Swapchain image views created.");
