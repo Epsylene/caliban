@@ -257,7 +257,7 @@ pub unsafe fn create_index_buffer(
     // The index buffer is created in the same way as the
     // vertex buffer: first create a staging buffer in
     // host-visible memory (accesible to the CPU)...
-    let size = (sizeof::<u16>() * INDICES.len()) as u64;
+    let size = std::mem::size_of_val(INDICES) as u64;
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance, 
         device, 
