@@ -1,12 +1,5 @@
 use crate::{
-    commands::*, 
-    descriptors::*, 
-    devices::*, 
-    pipeline::*, 
-    swapchain::*, 
-    texture::*, 
-    vertex::*,
-    depth::*,
+    commands::*, depth::*, descriptors::*, devices::*, model::load_model, pipeline::*, swapchain::*, texture::*, vertex::*
 };
 
 use std::{
@@ -93,6 +86,8 @@ pub struct AppData {
     // - Texture sampler: sampler object used to sample a
     //   texture
     // - Depth image: buffer used for depth testing
+    // - Vertices/indices: vertex and index data for the
+    //   current loaded model
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -129,6 +124,8 @@ pub struct AppData {
     pub depth_image: vk::Image,
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,    
 }
 
 pub struct App {
@@ -208,26 +205,31 @@ impl App {
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
 
-        // The final step before actual rendering is to create
-        // the command pool, to allocate memory for the command
-        // buffers; the depth objects (depth buffer and related
-        // objects) to provide depth information to the scene;
-        // the texture image and its view; the framebuffers,
-        // which we use to bind the attachments specified
-        // during render pass creation; the vertex buffers and
-        // index buffers, to later populate vertex data for the
-        // GPU; the uniform buffers to send ressources to the
-        // shaders; the descriptor pool to allocate the
-        // descriptor sets these ressources are bound to; the
-        // actual descriptors sets; and the command buffers
-        // (allocated in a command pool), to record them and
-        // submit them to the GPU.
+        // The final step before actual rendering is to:
+        //  - Create the command pool, to allocate memory for
+        // the command buffers; 
+        //  - The depth objects (depth buffer and related
+        // objects), to provide depth information to the scene; 
+        //  - The texture image and its view; 
+        //  - The framebuffers, which we use to bind the
+        // attachments specified during render pass creation;
+        //  - Load the OBJ model to render; 
+        //  - Allocate the vertex buffers and index buffers, to
+        // later populate vertex data for the GPU; 
+        //  - The uniform buffers to send ressources to the
+        // shaders; 
+        //  - The descriptor pool to allocate the descriptor
+        // sets these ressources are bound to; 
+        //  - The actual descriptors sets;
+        //  - The command buffers (allocated in a command
+        // pool), to record them and submit them to the GPU.
         create_command_pool(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
-        create_texture_image(&instance, &device, &mut data)?;
+        create_texture_image("res/viking_room.png", &instance, &device, &mut data)?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
+        load_model("res/viking_room.obj", &mut data)?;
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffer(&instance, &device, &mut data)?;

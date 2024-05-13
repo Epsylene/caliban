@@ -1,7 +1,6 @@
 use crate::{
     app::AppData,
     queues::QueueFamilyIndices,
-    vertex::INDICES,
 };
 
 use vulkanalia::prelude::v1_0::*;
@@ -159,9 +158,9 @@ pub unsafe fn create_command_buffers(
         // array of buffers to update (data.vertex_buffer) and
         // the offsets in the buffers (0 here). The index
         // buffer, apart from its data, takes an offset (0 too)
-        // and a type size (UINT16 in our case).
+        // and a type size (UINT32 in our case).
         device.cmd_bind_vertex_buffers(command_buffer, 0, &[data.vertex_buffer], &[0]);
-        device.cmd_bind_index_buffer(command_buffer, data.index_buffer, 0, vk::IndexType::UINT16);
+        device.cmd_bind_index_buffer(command_buffer, data.index_buffer, 0, vk::IndexType::UINT32);
         
         // Then we can bind the descriptor sets holding the
         // resources passed to the shaders like uniform
@@ -185,7 +184,7 @@ pub unsafe fn create_command_buffers(
         // where we are not doing instanced rendering), the
         // first vertex index in the vertex buffer (0, no
         // offset) and the first instance index (same).
-        device.cmd_draw_indexed(command_buffer, INDICES.len() as u32, 1, 0, 0, 0);
+        device.cmd_draw_indexed(command_buffer, data.indices.len() as u32, 1, 0, 0, 0);
 
         // The render pass can then be ended, and the command
         // buffer can stop recording.

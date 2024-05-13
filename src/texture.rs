@@ -12,13 +12,14 @@ use anyhow::Result;
 use log::info;
 
 pub unsafe fn create_texture_image(
+    path: &str,
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
 ) -> Result<()> {
     // First we open the file, decode it, and retrieve the
     // pixel data as well as some info.
-    let image = File::open("res/texture.png")?;
+    let image = File::open(path)?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;

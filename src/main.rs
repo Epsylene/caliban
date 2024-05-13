@@ -11,6 +11,7 @@ mod texture;
 mod commands;
 mod image;
 mod depth;
+mod model;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

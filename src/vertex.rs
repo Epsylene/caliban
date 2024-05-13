@@ -3,83 +3,24 @@ use crate::{
     buffers::{create_buffer, copy_buffer},
 };
 
-use glam::{
-    Vec2, vec2, 
-    Vec3, vec3
-};
+use glam::{ Vec2, Vec3 };
 use vulkanalia::{
     vk::HasBuilder, 
     prelude::v1_0::*,
 };
 use anyhow::Result;
 use log::info;
-use lazy_static::lazy_static;
 
 use std::ptr::copy_nonoverlapping as memcpy;
 use std::mem::size_of as sizeof;
-
-lazy_static! {
-    static ref VERTICES: Vec<Vertex> = vec![
-        Vertex::new(
-            vec3(-0.5, -0.5, 0.0), 
-            vec3(1.0, 0.0, 0.0), 
-            vec2(1.0, 0.0)
-        ),
-
-        Vertex::new(
-            vec3(0.5, -0.5, 0.0), 
-            vec3(0.0, 1.0, 0.0), 
-            vec2(0.0, 0.0)
-        ),
-
-        Vertex::new(
-            vec3(0.5, 0.5, 0.0), 
-            vec3(0.0, 0.0, 1.0), 
-            vec2(0.0, 1.0)
-        ),
-
-        Vertex::new(
-            vec3(-0.5, 0.5, 0.0), 
-            vec3(0.0, 0.0, 0.0), 
-            vec2(1.0, 1.0)
-        ),
-
-        Vertex::new(
-            vec3(-0.5, -0.5, -0.5), 
-            vec3(1.0, 0.0, 0.0), 
-            vec2(1.0, 0.0)
-        ),
-
-        Vertex::new(
-            vec3(0.5, -0.5, -0.5), 
-            vec3(0.0, 1.0, 0.0), 
-            vec2(0.0, 0.0)
-        ),
-
-        Vertex::new(
-            vec3(0.5, 0.5, -0.5), 
-            vec3(0.0, 0.0, 1.0), 
-            vec2(0.0, 1.0)
-        ),
-
-        Vertex::new(
-            vec3(-0.5, 0.5, -0.5), 
-            vec3(0.0, 0.0, 0.0), 
-            vec2(1.0, 1.0)
-        ),
-    ];
-}
-
-pub const INDICES: &[u16] = &[
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4,
-];
+use std::hash::{Hash, Hasher};
 
 #[repr(C)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Vertex {
-    pos: Vec3,
-    color: Vec3,
-    texture: Vec2,
+    pub pos: Vec3,
+    pub color: Vec3,
+    pub texture: Vec2,
 }
 
 impl Vertex {
@@ -161,6 +102,18 @@ impl Vertex {
     }
 }
 
+impl Eq for Vertex {}
+
+// Needed to use the Vertex struct as a key in a HashMap (when
+// loading unique vertices from a model file, for example).
+impl Hash for Vertex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pos.to_array().iter().for_each(|f| f.to_bits().hash(state));
+        self.color.to_array().iter().for_each(|f| f.to_bits().hash(state));
+        self.texture.to_array().iter().for_each(|f| f.to_bits().hash(state));
+    }
+}
+
 pub unsafe fn create_vertex_buffer(
     instance: &Instance,
     device: &Device,
@@ -181,7 +134,7 @@ pub unsafe fn create_vertex_buffer(
     // be visible by all devices). It will also we marked as a
     // TRANSFER_SRC buffer, meaning that it can be used as the
     // source of a transfer command (like a copy command).
-    let size = (sizeof::<Vertex>() * VERTICES.len()) as u64;
+    let size = (sizeof::<Vertex>() * data.vertices.len()) as u64;
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance, 
         device, 
@@ -217,7 +170,7 @@ pub unsafe fn create_vertex_buffer(
     // reading to force them to fetch the latest data from VRAM.
     // Host coherence may lead to slightly worse performance
     // than explicit flushing, but it is also simpler.
-    memcpy(VERTICES.as_ptr(), memory.cast(), VERTICES.len());
+    memcpy(data.vertices.as_ptr(), memory.cast(), data.vertices.len());
     device.unmap_memory(staging_buffer_memory);
 
     // We may now allocate the actual vertex buffer. It has the
@@ -257,7 +210,7 @@ pub unsafe fn create_index_buffer(
     // The index buffer is created in the same way as the
     // vertex buffer: first create a staging buffer in
     // host-visible memory (accesible to the CPU)...
-    let size = std::mem::size_of_val(INDICES) as u64;
+    let size = (sizeof::<u32>() * data.indices.len()) as u64;
     let (staging_buffer, staging_buffer_memory) = create_buffer(
         instance, 
         device, 
@@ -276,7 +229,7 @@ pub unsafe fn create_index_buffer(
     )?;
 
     // ...and copy the index data into the staging buffer.
-    memcpy(INDICES.as_ptr(), memory.cast(), INDICES.len());
+    memcpy(data.indices.as_ptr(), memory.cast(), data.indices.len());
     device.unmap_memory(staging_buffer_memory);
 
     // Then, create an index in device-local memory (that is,

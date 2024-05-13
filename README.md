@@ -19,4 +19,6 @@ with graphics programming. For now, there is:
   buffers, buffers everywhere;
 - The Vulkan Triangle;
 - Samplers and textures;
-- And last, but not least, a depth buffer.
+- A depth buffer.
+
+The code is being heavily commented as I go through the tutorial, so it can be useful as an implementation reference.
