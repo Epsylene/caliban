@@ -19,6 +19,8 @@ with graphics programming. For now, there is:
   buffers, buffers everywhere;
 - The Vulkan Triangle;
 - Samplers and textures;
-- A depth buffer.
+- A depth buffer;
+- OBJ model loading;
+- Mipmaps.
 
 The code is being heavily commented as I go through the tutorial, so it can be useful as an implementation reference.

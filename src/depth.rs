@@ -33,6 +33,7 @@ pub unsafe fn create_depth_objects(
         data, 
         data.swapchain_extent.width, 
         data.swapchain_extent.height, 
+        1,
         format, 
         vk::ImageTiling::OPTIMAL, 
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT, 
@@ -42,24 +43,16 @@ pub unsafe fn create_depth_objects(
     data.depth_image = depth_image;
     data.depth_image_memory = depth_image_memory;
     
-    // Then, as with other images, we need to create an image
-    // view to access the depth attachment from the shader.
+    // Finally, we can create a view of the depth image, which
+    // is what will be used by the swapchain.
     data.depth_image_view = create_image_view(
         device, 
         data.depth_image, 
-        format,
-        vk::ImageAspectFlags::DEPTH,
-    )?;
-
-    transition_image_layout(
-        device, 
-        data, 
-        data.depth_image, 
         format, 
-        vk::ImageLayout::UNDEFINED, 
-        vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        vk::ImageAspectFlags::DEPTH,
+        1
     )?;
-
+    
     info!("Depth objects created.");
     Ok(())
 }

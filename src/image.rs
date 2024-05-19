@@ -12,6 +12,7 @@ pub unsafe fn create_image_view(
     image: vk::Image,
     format: vk::Format,
     aspects: vk::ImageAspectFlags,
+    mip_levels: u32,
 ) -> Result<vk::ImageView> {
     // Images in Vulkan are not accessed as such, but through
     // what are called "image views", which add level of
@@ -33,8 +34,7 @@ pub unsafe fn create_image_view(
     // - aspect_mask: the part of the image data (the image
     //   aspect) to be accessed (one image could contain both
     //   RGB data and depth info bits, for example);
-    // - base_mip_level: the first accessible mipmap level
-    //   (here 0, since we don't use mipmapping yet);
+    // - base_mip_level: the first accessible mipmap level;
     // - level_count: the number of accessible mipmap levels;
     // - base_array_layer: the first accessible array layer
     //   (simultaneous views of the same image, for example for
@@ -43,7 +43,7 @@ pub unsafe fn create_image_view(
     let subresource_range = vk::ImageSubresourceRange::builder()
         .aspect_mask(aspects)
         .base_mip_level(0)
-        .level_count(1)
+        .level_count(mip_levels)
         .base_array_layer(0)
         .layer_count(1)
         .build();
@@ -69,6 +69,7 @@ pub unsafe fn create_image(
     data: &mut AppData,
     width: u32,
     height: u32,
+    mip_levels: u32,
     format: vk::Format,
     tiling: vk::ImageTiling,
     usage: vk::ImageUsageFlags,
@@ -78,7 +79,8 @@ pub unsafe fn create_image(
     // - the image type (2D)
     // - the extent (width, height and depth of the image)
     // - the format (32-bit RGBA SRGB, for example)
-    // - the number of mip levels (1)
+    // - the number of mip levels (as much as we calculated the
+    //   texture image to have)
     // - the number of image layers (for cube maps, environment
     //   maps, animated textures, etc; 1)
     // - the number of samples (for multisampling; 1,
@@ -109,7 +111,7 @@ pub unsafe fn create_image(
             depth: 1,
         })
         .format(format)
-        .mip_levels(1)
+        .mip_levels(mip_levels)
         .array_layers(1)
         .samples(vk::SampleCountFlags::_1)
         .tiling(tiling)
@@ -149,6 +151,7 @@ pub unsafe fn transition_image_layout(
     format: vk::Format,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
+    mip_levels: u32,
 ) -> Result<()> {
     let command_buffer = begin_single_command_batch(device, data)?;
 
@@ -236,7 +239,7 @@ pub unsafe fn transition_image_layout(
     // transition is specified. And thirdly, because barriers
     // are primarily used for synchronization purposes, we must
     // specify which types of operations involving the resource
-    // mut happen before the barrier, and which must happen
+    // must happen before the barrier, and which must happen
     // after.
     let barrier = vk::ImageMemoryBarrier::builder()
         .old_layout(old_layout)
@@ -263,7 +266,7 @@ pub unsafe fn transition_image_layout(
                 }
             },
             base_mip_level: 0,
-            level_count: 1,
+            level_count: mip_levels,
             base_array_layer: 0,
             layer_count: 1,
         })

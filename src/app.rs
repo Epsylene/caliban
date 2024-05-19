@@ -88,6 +88,7 @@ pub struct AppData {
     // - Depth image: buffer used for depth testing
     // - Vertices/indices: vertex and index data for the
     //   current loaded model
+    // - Mip levels: the number of mipmap levels in the texture
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -125,7 +126,8 @@ pub struct AppData {
     pub depth_image_memory: vk::DeviceMemory,
     pub depth_image_view: vk::ImageView,
     pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,    
+    pub indices: Vec<u32>,
+    pub mip_levels: u32,
 }
 
 pub struct App {
