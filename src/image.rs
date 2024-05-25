@@ -70,6 +70,7 @@ pub unsafe fn create_image(
     width: u32,
     height: u32,
     mip_levels: u32,
+    samples: vk::SampleCountFlags,
     format: vk::Format,
     tiling: vk::ImageTiling,
     usage: vk::ImageUsageFlags,
@@ -113,7 +114,7 @@ pub unsafe fn create_image(
         .format(format)
         .mip_levels(mip_levels)
         .array_layers(1)
-        .samples(vk::SampleCountFlags::_1)
+        .samples(samples)
         .tiling(tiling)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .usage(usage)
@@ -142,6 +143,50 @@ pub unsafe fn create_image(
     device.bind_image_memory(image, image_memory, 0)?;
 
     Ok((image, image_memory))
+}
+
+pub unsafe fn create_color_objects(
+    instance: &Instance,
+    device: &Device,
+    data: &mut AppData,
+) -> Result<()> {
+    // MSAA, by its very definition, needs to store multiple
+    // samples per pixel to perform antialiasing. Our
+    // framebuffer is not equipped to handle multisampled
+    // images, however, so we need to create a separate buffer
+    // to write the MSAA operation to, which we call the "color
+    // image" (since it holds color data). This image is marked
+    // as COLOR_ATTACHMENT (used as color or resolve
+    // attachment) and TRANSIENT_ATTACHMENT (optimized for
+    // short-lived data, like the MSAA buffer).
+    let (color_image, color_image_memory) = create_image(
+        instance, 
+        device, 
+        data, 
+        data.swapchain_extent.width, 
+        data.swapchain_extent.height, 
+        1,
+        data.msaa_samples,
+        data.swapchain_format, 
+        vk::ImageTiling::OPTIMAL, 
+        vk::ImageUsageFlags::COLOR_ATTACHMENT 
+            | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )?;
+
+    data.color_image = color_image;
+    data.color_image_memory = color_image_memory;
+    
+    // Then we can create the image view for swapchain usage.
+    data.color_image_view = create_image_view(
+        device, 
+        data.color_image, 
+        data.swapchain_format, 
+        vk::ImageAspectFlags::COLOR,
+        1
+    )?;
+    
+    Ok(())
 }
 
 pub unsafe fn transition_image_layout(
@@ -395,4 +440,34 @@ pub unsafe fn get_supported_format(
             }
         })
         .ok_or_else(|| anyhow!("Failed to find supported format"))
+}
+
+pub unsafe fn get_max_msaa_samples(
+    instance: &Instance,
+    data: &AppData,
+) -> vk::SampleCountFlags {
+    // The maximum number of samples supported by the device is
+    // queried from the physical device properties. There are
+    // both color and depth sample counts, so we will take the
+    // highest common value.
+    let properties = instance.get_physical_device_properties(data.physical_device);
+    let counts = properties.limits.framebuffer_color_sample_counts
+        & properties.limits.framebuffer_depth_sample_counts;
+
+    // The number of samples is a bitmask, so we can just
+    // iterate over the possible values and return the first
+    // one that is supported. If none are, we just return 1
+    // (one sample per pixel, the same as no multisampling).
+    [
+        vk::SampleCountFlags::_64,
+        vk::SampleCountFlags::_32,
+        vk::SampleCountFlags::_16,
+        vk::SampleCountFlags::_8,
+        vk::SampleCountFlags::_4,
+        vk::SampleCountFlags::_2,
+    ]
+    .iter()
+    .cloned()
+    .find(|&c| counts.contains(c))
+    .unwrap_or(vk::SampleCountFlags::_1)
 }

@@ -21,6 +21,7 @@ with graphics programming. For now, there is:
 - Samplers and textures;
 - A depth buffer;
 - OBJ model loading;
-- Mipmaps.
+- Mipmaps
+- Multisample antialiasing (MSAA);
 
 The code is being heavily commented as I go through the tutorial, so it can be useful as an implementation reference.

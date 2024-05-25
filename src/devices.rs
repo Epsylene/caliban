@@ -1,9 +1,15 @@
 use std::collections::HashSet;
 
 use crate::{
-    app::{AppData, VALIDATION_ENABLED, VALIDATION_LAYER, PORTABILITY_MACOS_VERSION},
-    queues::QueueFamilyIndices,
-    swapchain::SwapchainSupport,
+    app::{
+        AppData, 
+        PORTABILITY_MACOS_VERSION, 
+        VALIDATION_ENABLED, 
+        VALIDATION_LAYER
+    }, 
+    image::get_max_msaa_samples, 
+    queues::QueueFamilyIndices, 
+    swapchain::SwapchainSupport
 };
 
 use thiserror::Error;
@@ -79,8 +85,8 @@ pub unsafe fn pick_physical_device(
     // There can be more than one graphics device on the system
     // (one dedicated and one integrated graphics card at the
     // same time, for example), and in fact a Vulkan instance
-    // can set up and use any number of them simultaneously, but
-    // we will stick here to listing the available physical
+    // can set up and use any number of them simultaneously,
+    // but we will stick here to listing the available physical
     // devices and picking the first graphics-capable one.
     for device in instance.enumerate_physical_devices()? {
         let properties = instance.get_physical_device_properties(device);
@@ -88,8 +94,13 @@ pub unsafe fn pick_physical_device(
         if let Err(error) = check_physical_device(instance, data, device) {
             warn!("Skipping physical device ({}): {}", properties.device_name, error);
         } else {
-            info!("Selected physical device: {}", properties.device_name);
+            // If there is a suitable device for graphics, we
+            // pick it and check the maximum number of samples
+            // it can handle (for antialiasing).
             data.physical_device = device;
+            data.msaa_samples = get_max_msaa_samples(instance, data);
+            
+            info!("Selected physical device: {}", properties.device_name);
             return Ok(());
         }
     }

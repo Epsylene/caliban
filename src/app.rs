@@ -1,5 +1,14 @@
 use crate::{
-    commands::*, depth::*, descriptors::*, devices::*, model::load_model, pipeline::*, swapchain::*, texture::*, vertex::*
+    commands::*, 
+    depth::*, 
+    descriptors::*, 
+    devices::*, 
+    image::create_color_objects, 
+    model::load_model, 
+    pipeline::*, 
+    swapchain::*, 
+    texture::*, 
+    vertex::*
 };
 
 use std::{
@@ -89,6 +98,9 @@ pub struct AppData {
     // - Vertices/indices: vertex and index data for the
     //   current loaded model
     // - Mip levels: the number of mipmap levels in the texture
+    // - MSAA samples: the number of samples to use for MSAA
+    //   (antialisaing)
+    // - Color image: render target for the MSAA operation
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
@@ -128,6 +140,10 @@ pub struct AppData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub mip_levels: u32,
+    pub msaa_samples: vk::SampleCountFlags,
+    pub color_image: vk::Image,
+    pub color_image_memory: vk::DeviceMemory,
+    pub color_image_view: vk::ImageView,
 }
 
 pub struct App {
@@ -210,6 +226,7 @@ impl App {
         // The final step before actual rendering is to:
         //  - Create the command pool, to allocate memory for
         // the command buffers; 
+        //  - The color objects (buffer for the MSAA operation)
         //  - The depth objects (depth buffer and related
         // objects), to provide depth information to the scene; 
         //  - The texture image and its view; 
@@ -226,6 +243,7 @@ impl App {
         //  - The command buffers (allocated in a command
         // pool), to record them and submit them to the GPU.
         create_command_pool(&instance, &device, &mut data)?;
+        create_color_objects(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
         create_texture_image("res/viking_room.png", &instance, &device, &mut data)?;
@@ -479,6 +497,7 @@ impl App {
         create_swapchain_image_views(&self.device, &mut self.data)?;
         create_render_pass(&self.instance, &self.device, &mut self.data)?;
         create_pipeline(&self.device, &mut self.data)?;
+        create_color_objects(&self.instance, &self.device, &mut self.data)?;
         create_depth_objects(&self.instance, &self.device, &mut self.data)?;
         create_framebuffers(&self.device, &mut self.data)?;
         create_uniform_buffer(&self.instance, &self.device, &mut self.data)?;
@@ -534,6 +553,11 @@ impl App {
     }
 
     unsafe fn destroy_swapchain(&mut self) {
+        // Color image
+        self.device.destroy_image_view(self.data.color_image_view, None);
+        self.device.destroy_image(self.data.color_image, None);
+        self.device.free_memory(self.data.color_image_memory, None);
+        
         // Depth image
         self.device.destroy_image_view(self.data.depth_image_view, None);
         self.device.destroy_image(self.data.depth_image, None);

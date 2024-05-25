@@ -37,14 +37,14 @@ pub unsafe fn create_framebuffers(
             // don't know in advance which one will be
             // presented at a time), we have to create one
             // framebuffer for each image in the swapchain
-            // (that is, for each color-depth pair). The depth
-            // attachment can be shared between all the images
-            // since there is only one subpass running at a
-            // time due to our semaphores.
-            let images = &[i, data.depth_image_view];
+            // (that is, for each color-depth-resolve triple).
+            // The depth attachment can be shared between all
+            // the images since there is only one subpass
+            // running at a time due to our semaphores.
+            let attachments = &[data.color_image_view, data.depth_image_view, i];
             let create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(data.render_pass)
-                .attachments(images)
+                .attachments(attachments)
                 .width(data.swapchain_extent.width)
                 .height(data.swapchain_extent.height)
                 .layers(1);
@@ -89,25 +89,26 @@ pub unsafe fn create_render_pass(
     //   textures and framebuffers are images with a certain
     //   pixel format, whose layout can be changed depending on
     //   the current rendering operation. Some common layouts
-    //   are COLOR_ATTACHMENT_OPTIMAL (optimized for images used
-    //   as color attachments, before actual rendering),
+    //   are COLOR_ATTACHMENT_OPTIMAL (optimized for images
+    //   used as color attachments, before actual rendering),
     //   PRESENT_SRC_KHR (images to be presented in the
     //   swapchain) and TRANSFER_DST_OPTIMAL (destination for a
-    //   memory copy operation). The UNDEFINED layout means that
-    //   we don't care about the previous layout of the image,
-    //   which is the case for the initial layout. We want the
-    //   image to be ready for presentation at the end of the
-    //   render pass, so we set the final layout to
-    //   PRESENT_SRC_KHR.
+    //   memory copy operation). The UNDEFINED layout means
+    //   that we don't care about the previous layout of the
+    //   image, which is the case for the initial layout.
+    //   Because the image will be used as a color attachment
+    //   for MSAA and resolved to another buffer before
+    //   presentation, we set the "final layout" field to
+    //   COLOR_ATTACHMENT_OPTIMAL.
     let color_attachment = vk::AttachmentDescription::builder()
         .format(data.swapchain_format)
-        .samples(vk::SampleCountFlags::_1)
+        .samples(data.msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     // The second attachment we are defining is the depth
     // buffer, which is used to store the depth and stencil
@@ -119,13 +120,29 @@ pub unsafe fn create_render_pass(
     // finished.
     let depth_stencil_attachment = vk::AttachmentDescription::builder()
         .format(get_depth_format(instance, data)?)
-        .samples(vk::SampleCountFlags::_1)
+        .samples(data.msaa_samples)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::DONT_CARE)
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    // After the image has been sampled and antialiased, we
+    // need to resolve it to a regular attachment (with one
+    // sample per pixel) before presenting it. This is the
+    // third attachment, which has a final layout of
+    // PRESENT_SRC_KHR because it will be presented in the
+    // swapchain.
+    let color_resolve_attachment = vk::AttachmentDescription::builder()
+        .format(data.swapchain_format)
+        .samples(vk::SampleCountFlags::_1)
+        .load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
     // Render passes consist of multiple subpasses, subsequent
     // rendering operations that depend on the contents of
@@ -139,31 +156,38 @@ pub unsafe fn create_render_pass(
     // the attachment in the render pass (referenced in the
     // fragment shader with the "layout(location = 0)"
     // directive) and the layout of the attachment. Our render
-    // pass consists of a single subpass with two attachments,
+    // pass consists of a single subpass with 3 attachments,
     // color...
     let color_attachment_ref = vk::AttachmentReference::builder()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    // ...and depth.
+    // ...depth...
     let depth_attachment_ref = vk::AttachmentReference::builder()
         .attachment(1)
         .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+    // ...and color resolution.
+    let color_resolve_attachment_ref = vk::AttachmentReference::builder()
+        .attachment(2)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
     // The subpass is explicitly stated to be a graphics
     // subpass (as opposed to a compute subpass, for example),
-    // and the color and depth attachments are passed to it.
-    // There can also be input attachments (attachments read
-    // from a shader), resolve attachments (used for
+    // and the color, depth and resolve attachments are passed
+    // to it. There can also be input attachments (attachments
+    // read from a shader), resolve attachments (used for
     // multisampling color attachments), depth stencil
     // attachments (for depth and stencil data) and preserve
     // attachments (attachments which are not used by the
     // subpass, but must be preserved for later use).
-    let color_attachments = &[color_attachment_ref];
+    let color_attachments = [color_attachment_ref];
+    let resolve_attachments = [color_resolve_attachment_ref];
     let subpass = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(color_attachments)
-        .depth_stencil_attachment(&depth_attachment_ref);
+        .color_attachments(&color_attachments)
+        .depth_stencil_attachment(&depth_attachment_ref)
+        .resolve_attachments(&resolve_attachments);
 
     // Subpass dependencies specify memory and execution
     // dependencies between subpasses. Although we have only a
@@ -196,7 +220,11 @@ pub unsafe fn create_render_pass(
     
     // The render pass info struct can then finally be created,
     // containing both the attachments and the subpass.
-    let attachments = &[color_attachment, depth_stencil_attachment];
+    let attachments = &[
+        color_attachment, 
+        depth_stencil_attachment,
+        color_resolve_attachment,
+    ];
     let subpasses = &[subpass];
     let dependencies = &[dependency];
     let info = vk::RenderPassCreateInfo::builder()
@@ -407,7 +435,7 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     // to 1.
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
         .sample_shading_enable(false)
-        .rasterization_samples(vk::SampleCountFlags::_1);
+        .rasterization_samples(data.msaa_samples);
 
     // After rasterization comes the fragment shader. As with
     // the vertex shader, we will include the shader bytecode
