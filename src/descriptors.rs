@@ -8,9 +8,11 @@ use anyhow::Result;
 use glam::Mat4;
 use log::*;
 
+// Struct holding the view and projection matrices for the
+// camera, which are going to be passed to the vertex shader as
+// a uniform buffer object (UBO).
 #[repr(C)]
-pub struct Mvp {
-    pub model: Mat4,
+pub struct Vp {
     pub view: Mat4,
     pub proj: Mat4,
 }
@@ -118,7 +120,7 @@ pub unsafe fn create_descriptor_sets(
         let buffer_info = vk::DescriptorBufferInfo::builder()
             .buffer(data.uniform_buffers[i])
             .offset(0)
-            .range(std::mem::size_of::<Mvp>() as u64);
+            .range(std::mem::size_of::<Vp>() as u64);
 
         // ...and a second descriptor for the texture image,
         // which has an optimal layout for read-only shader
@@ -196,7 +198,7 @@ pub unsafe fn create_uniform_buffer(
             instance,
             device,
             data,
-            std::mem::size_of::<Mvp>() as u64,
+            std::mem::size_of::<Vp>() as u64,
             vk::BufferUsageFlags::UNIFORM_BUFFER, 
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
         )?;

@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use crate::{
     app::AppData,
     shaders::*,
@@ -513,6 +515,22 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
         .logic_op_enable(false)
         .attachments(attachments);
 
+    // Data can be passed to the shaders through two main
+    // methods: uniforms and push constants. Uniform buffers
+    // can hold large amounts of data, but are slower to
+    // transfer to the device than push constants. Conversely,
+    // push constants are very small (between 128 and 256 bytes
+    // on most hardware), but are also very fast to transfer;
+    // thus, they are adapted for small amounts of data that
+    // change frequently, like the model and view parts of a
+    // MVP matrix. We will use a push constant for the model
+    // matrix only here, since the view doesn't change, which
+    // makes a pack of 16 floats (4x4 matrix).
+    let vert_pc_range = vk::PushConstantRange::builder()
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .offset(0)
+        .size(size_of::<[f32; 16]>() as u32);
+
     // The ressources that can be accessed by the pipeline,
     // like uniforms (global data shared across shaders) or
     // push constants (small bunches of data sent to a shader),
@@ -521,8 +539,10 @@ pub unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()>
     // contains one uniform buffer for the MVP transformation
     // and a sampler for the texture.
     let descriptor_set_layouts = &[data.descriptor_set_layout];
+    let pc_ranges = &[vert_pc_range];
     let layout_info = vk::PipelineLayoutCreateInfo::builder()
-        .set_layouts(descriptor_set_layouts);
+        .set_layouts(descriptor_set_layouts)
+        .push_constant_ranges(pc_ranges);
     data.pipeline_layout = device.create_pipeline_layout(&layout_info, None)?;
 
     // We can now combine all of the structures and objects

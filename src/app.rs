@@ -421,24 +421,14 @@ impl App {
     }
 
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        // When updating the MVP uniform buffer, we first take
-        // the current time (in seconds)...
-        let time = self.start.elapsed().as_secs_f32();
-
-        // ...then build a model matrix rotating around the Z
-        // axis with a pi/2 frequency...
-        let model = Mat4::from_axis_angle(
-            vec3(0.0, 0.0, 1.0), 
-            time * std::f32::consts::FRAC_PI_2);
-
-        // ...followed by a view matrix looking from above at
-        // (2,2,2)...
+        // The uniform buffer we are sending is comprised of a
+        // view matrix looking from above at (2,2,2)...
         let view = Mat4::look_at_rh(
             vec3(2.0, 2.0, 2.0), 
             vec3(0.0, 0.0, 0.0), 
             vec3(0.0, 0.0, 1.0));
 
-        // ...and the perspective projection matrix with a 45º
+        // ...and a perspective projection matrix for a 45º
         // FOV, an aspect ratio matching that of the window,
         // and a near and far plane at 0.1 and 10.0.
         let mut proj = Mat4::perspective_rh(
@@ -451,7 +441,7 @@ impl App {
         proj.y_axis.y *= -1.0;
 
         // Those can then be combined in the MVP object...
-        let mvp = Mvp { model, view, proj };
+        let vp = Vp { view, proj };
 
         // ...and mapped to the uniform buffer memory (that is,
         // the uniform buffer in the device memory) for the
@@ -459,12 +449,12 @@ impl App {
         let memory = self.device.map_memory(
             self.data.uniform_buffers_memory[image_index],
             0, 
-            std::mem::size_of::<Mvp>() as u64, 
+            std::mem::size_of::<Vp>() as u64, 
             vk::MemoryMapFlags::empty()
         )?;
 
         // ...and finally copied.
-        memcpy(&mvp, memory.cast(), 1);
+        memcpy(&vp, memory.cast(), 1);
         self.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
         
         debug!("Updated uniform buffer.");

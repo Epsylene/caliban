@@ -1,9 +1,10 @@
 use crate::{
-    app::AppData,
-    queues::QueueFamilyIndices,
+    app::AppData, 
+    queues::QueueFamilyIndices
 };
 
 use vulkanalia::prelude::v1_0::*;
+use glam::{Mat4, Vec3};
 use anyhow::Result;
 use log::info;
 
@@ -80,17 +81,25 @@ pub unsafe fn create_command_buffers(
 
     data.command_buffers = device.allocate_command_buffers(&allocate_info)?;
 
-    // Command buffers can then be started recording, specifying
-    // usage with some parameters:
-    //  - flags: either ONE_TIME_SUBMIT (the command buffer will
-    //    be rerecorded right after executing it once),
+    // The model matrix of the shader is passed as a push
+    // constant with the command buffer, but we need its bytes.
+    let model = Mat4::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), 0.0);
+    let model_bytes = std::slice::from_raw_parts(
+        model.as_ref().as_ptr() as *const u8,
+        std::mem::size_of::<Mat4>(),
+    );
+
+    // Command buffers can then be started recording,
+    // specifying usage with some parameters:
+    //  - flags: either ONE_TIME_SUBMIT (the command buffer
+    //    will be rerecorded right after executing it once),
     //    RENDER_PASS_CONTINUE (secondary command buffers that
     //    are entirely within a single render pass) and
     //    SIMULTANEOUS_USE (the command buffer can be
     //    resubmitted while it is in the pending state);
     //  - inheritance info: only used for secondary command
-    //    buffer, this specifies which state to inherit from the
-    //    calling primary command buffer.
+    //    buffer, this specifies which state to inherit from
+    //    the calling primary command buffer.
     for (i, &command_buffer) in data.command_buffers.iter().enumerate() {
         let inheritance = vk::CommandBufferInheritanceInfo::builder();
         let info = vk::CommandBufferBeginInfo::builder()
@@ -177,8 +186,14 @@ pub unsafe fn create_command_buffers(
             data.pipeline_layout, 
             0, 
             &[data.descriptor_sets[i]],
-            &[]);
+            &[]
+        );
         
+        // Push constants are embedded in the command buffer
+        // and passed directly to the shader; this is the
+        // reason why they are so limited in size.
+        device.cmd_push_constants(command_buffer, data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
+
         // The final draw command takes the length of the index
         // buffer, the number of instances (1 in our case,
         // where we are not doing instanced rendering), the

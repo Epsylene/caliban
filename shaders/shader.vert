@@ -1,10 +1,13 @@
 #version 450
 
 layout(binding = 0) uniform MVP {
-    mat4 model;
     mat4 view;
     mat4 proj;
-} mvp;
+} vp;
+
+layout(push_constant) uniform PushConstants {
+    mat4 model;
+} pc;
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inColor;
@@ -20,7 +23,7 @@ void main() {
     // vertex color (inColor) to the fragment shader
     // (fragColor), as well as the texture coordinate
     // (inTexCoord) to the fragment shader (fragTexCoord).
-    gl_Position = mvp.proj * mvp.view * mvp.model * vec4(inPos, 1.0);
+    gl_Position = vp.proj * vp.view * pc.model * vec4(inPos, 1.0);
     fragColor = inColor;
     fragTexCoord = inTexCoord;
 }
