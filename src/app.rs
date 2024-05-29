@@ -19,7 +19,7 @@ use std::{
 
 use glam::{
     Mat4, 
-    vec3
+    vec3,
 };
 
 use winit::window::Window;
@@ -73,7 +73,8 @@ pub struct AppData {
     //   render pass instance
     // - Command buffers: buffers containing commands which can
     //   be submitted to a queue for execution
-    // - Command pool: memory pool for a set of command buffers
+    // - Command pools: memory pools for sets of command
+    //   buffers
     // - Semaphores: GPU-GPU synchronization primitive to insert
     //   a dependency within or accross command queue operations
     // - Fences: CPU-GPU synchronization primitive to insert a
@@ -116,7 +117,8 @@ pub struct AppData {
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
     pub command_buffers: Vec<vk::CommandBuffer>,
-    pub command_pool: vk::CommandPool,
+    pub global_command_pool: vk::CommandPool,
+    pub command_pools: Vec<vk::CommandPool>,
     pub image_available_semaphores: Vec<vk::Semaphore>,
     pub render_finished_semaphores: Vec<vk::Semaphore>,
     pub rendering_fences: Vec<vk::Fence>,
@@ -242,7 +244,7 @@ impl App {
         //  - The actual descriptors sets;
         //  - The command buffers (allocated in a command
         // pool), to record them and submit them to the GPU.
-        create_command_pool(&instance, &device, &mut data)?;
+        create_command_pools(&instance, &device, &mut data)?;
         create_color_objects(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
@@ -327,9 +329,10 @@ impl App {
         self.data.images_in_flight[image_index] = self.data.rendering_fences[self.frame];
 
         // When the image is signaled as available and set to
-        // the "render" state, we can also update the uniform
-        // buffer, since it means that the previous image has
-        // completed rendering.
+        // the "render" state, we can also update the command
+        // buffer and uniform buffer for the image, since it
+        // means that the previous one has completed rendering.
+        self.update_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
 
         // We can now configure the queue submit operation with
@@ -417,6 +420,177 @@ impl App {
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         debug!("Rendering...");
+        Ok(())
+    }
+
+    unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
+        // Command buffers are allocated from pools and
+        // recorded with commands to send to the GPU. Changing
+        // commands dynamically requires changing the buffers,
+        // one way or another. Vulkan offers 3 basic approaches
+        // to this problem:
+        //  1) Reset the command buffer, which clears the
+        //     commands recorded to it, and record new ones.
+        //     This is simple enough, but frequent calls to
+        //     vkResetCmdBuffer might add an overhead.
+        //  2) Free the command buffer and allocate a new one.
+        //     This is much less efficient (up to 25 times
+        //     slower!) than resetting buffers, because it
+        //     involves repeated calls to the CPU for
+        //     allocating and deallocating the memory.
+        //  3) Reset the command pool, which resets all the
+        //     buffers allocated from it in one go. This is
+        //     even more performant than method 1 (by a factor
+        //     of 2). 
+        //
+        // We will use the third method here. This means that
+        // we need to have separate command pools for each
+        // image: with a single pool, we can't reset all the
+        // buffers at the same time, since some will be
+        // in-flight concurrently at different times. Then, at
+        // each update, the command pool for each image (and
+        // the buffers within) is reset, and new commands can
+        // instantly be recorded.
+        let command_pool = self.data.command_pools[image_index];
+        self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
+
+        let command_buffer = self.data.command_buffers[image_index];
+
+        // The command buffer is reset to a clean state before
+        // recording the commands for the current frame.
+        self.device.reset_command_buffer(
+            command_buffer,
+            vk::CommandBufferResetFlags::empty()
+        )?;
+
+        // The command buffer can then be started recording,
+        // specifying usage with some parameters:
+        //  - flags: either ONE_TIME_SUBMIT (the command buffer
+        //    will be rerecorded right after executing it
+        //    once), RENDER_PASS_CONTINUE (secondary command
+        //    buffers that are entirely within a single render
+        //    pass) and SIMULTANEOUS_USE (the command buffer
+        //    can be resubmitted while it is in the pending
+        //    state). We choose the first option because we
+        //    will be recording the command buffer every frame;
+        //  - inheritance info: only used for secondary command
+        //    buffers, this specifies which state to inherit
+        //    from the calling primary command buffer.
+        let inheritance = vk::CommandBufferInheritanceInfo::builder();
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .inheritance_info(&inheritance);
+
+        self.device.begin_command_buffer(command_buffer, &info)?;
+
+        // Now that the command buffer is recording, we can
+        // start the render pass, by specifying the render area
+        // (the swapchain extent, which is the size of the
+        // frame)...
+        let render_area = vk::Rect2D::builder()
+            .offset(vk::Offset2D::default())
+            .extent(self.data.swapchain_extent);
+
+        // ...the clear color for the color attachment
+        // (black)...
+        let color_clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        // ...for the depth (1.0, the far view plane) and the
+        // stencil (0, the discard value) attachment...
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
+
+        // ...and finally filling the info struct. The render
+        // pass can then begin with the corresponding command.
+        let clear_values = &[color_clear_value, depth_clear_value];
+        let info = vk::RenderPassBeginInfo::builder()
+            .render_pass(self.data.render_pass)
+            .framebuffer(self.data.framebuffers[image_index])
+            .render_area(render_area)
+            .clear_values(clear_values);
+
+        // The model matrix of the shader is passed as a push
+        // constant with the command buffer, but we need its
+        // bytes.
+        let time = self.start.elapsed().as_secs_f32();
+        let model = Mat4::from_axis_angle(vec3(0.0, 0.0, 1.0), time);
+        let model_bytes = std::slice::from_raw_parts(
+            model.as_ref().as_ptr() as *const u8,
+            std::mem::size_of::<Mat4>(),
+        );
+
+        // The first parameter (the same for every "cmd_xx"
+        // function) is the command buffer we are recording the
+        // command to. The second specifies the render pass
+        // info, and the third controls how the drawing
+        // commands within the render pass will be provided:
+        //  - INLINE: the commands are embedded in the primary
+        //    command buffer, no secondary command buffer is
+        //    used;
+        //  - SECONDARY_COMMAND_BUFFERS: the commands will be
+        //    executed from secondary command buffers.
+        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
+    
+        // We can then bind the pipeline, specifying if it is a
+        // GRAPHICS or COMPUTE pipeline.
+        self.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
+
+        // Before finally drawing the triangle, we first have
+        // to bind the vertex buffers containing the vertex
+        // data for our triangle, as well as the index buffer
+        // containing the indices for each vertex in the
+        // buffer. The vertex buffer needs to be specified the
+        // first vertex input binding to be updated (0), the
+        // array of buffers to update (data.vertex_buffer) and
+        // the offsets in the buffers (0 here). The index
+        // buffer, apart from its data, takes an offset (0 too)
+        // and a type size (UINT32 in our case).
+        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
+        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
+        
+        // Then we can bind the descriptor sets holding the
+        // resources passed to the shaders like uniform
+        // buffers, specifying the pipeline point they will be
+        // used by (GRAPHICS), the pipeline layout, the first
+        // set to be bound (0) and the array of sets to bind
+        // (in our case the descriptor set attached to the
+        // current image). The last parameter is an array of
+        // offsets used by dynamic descriptors, which we will
+        // not use for now.
+        self.device.cmd_bind_descriptor_sets(
+            command_buffer, 
+            vk::PipelineBindPoint::GRAPHICS, 
+            self.data.pipeline_layout, 
+            0, 
+            &[self.data.descriptor_sets[image_index]],
+            &[]
+        );
+        
+        // Push constants are embedded in the command buffer
+        // and passed directly to the shader; this is the
+        // reason why they are so limited in size.
+        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
+
+        // The final draw command takes the length of the index
+        // buffer, the number of instances (1 in our case,
+        // where we are not doing instanced rendering), the
+        // first vertex index in the vertex buffer (0, no
+        // offset) and the first instance index (same).
+        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
+
+        // The render pass can then be ended, and the command
+        // buffer can stop recording.
+        self.device.cmd_end_render_pass(command_buffer);
+        self.device.end_command_buffer(command_buffer)?;
+
         Ok(())
     }
 
@@ -530,7 +704,12 @@ impl App {
             .iter()
             .for_each(|&s| self.device.destroy_semaphore(s, None));
         
-        self.device.destroy_command_pool(self.data.command_pool, None);
+        self.data.command_pools
+            .iter()
+            .for_each(|&p| self.device.destroy_command_pool(p, None));
+        
+        self.device.destroy_command_pool(self.data.global_command_pool, None);
+        
         self.device.destroy_device(None);
         self.instance.destroy_surface_khr(self.data.surface, None);
 
@@ -571,7 +750,6 @@ impl App {
             .for_each(|&f| self.device.destroy_framebuffer(f, None));
 
         // Command buffers, pipeline, render pass
-        self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
         self.device.destroy_pipeline(self.data.pipeline, None);
         self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
         self.device.destroy_render_pass(self.data.render_pass, None);
