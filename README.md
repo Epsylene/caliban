@@ -24,5 +24,6 @@ with graphics programming. For now, there is:
 - Mipmaps
 - Multisample antialiasing (MSAA)
 - Push constants
+- Primary and secondary command buffers
 
 The code is being heavily commented as I go through the tutorial, so it can be useful as an implementation reference.

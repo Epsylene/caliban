@@ -116,7 +116,8 @@ pub struct AppData {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub framebuffers: Vec<vk::Framebuffer>,
-    pub command_buffers: Vec<vk::CommandBuffer>,
+    pub primary_command_buffers: Vec<vk::CommandBuffer>,
+    pub secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
     pub global_command_pool: vk::CommandPool,
     pub command_pools: Vec<vk::CommandPool>,
     pub image_available_semaphores: Vec<vk::Semaphore>,
@@ -332,7 +333,7 @@ impl App {
         // the "render" state, we can also update the command
         // buffer and uniform buffer for the image, since it
         // means that the previous one has completed rendering.
-        self.update_command_buffer(image_index)?;
+        self.update_primary_command_buffer(image_index)?;
         self.update_uniform_buffer(image_index)?;
 
         // We can now configure the queue submit operation with
@@ -356,7 +357,7 @@ impl App {
         //    semaphore).
         let image_available = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.data.command_buffers[image_index]];
+        let command_buffers = &[self.data.primary_command_buffers[image_index]];
         let render_finished = &[self.data.render_finished_semaphores[self.frame]];
         let submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(image_available)
@@ -423,7 +424,7 @@ impl App {
         Ok(())
     }
 
-    unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
+    unsafe fn update_primary_command_buffer(&mut self, image_index: usize) -> Result<()> {
         // Command buffers are allocated from pools and
         // recorded with commands to send to the GPU. Changing
         // commands dynamically requires changing the buffers,
@@ -454,14 +455,7 @@ impl App {
         let command_pool = self.data.command_pools[image_index];
         self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
 
-        let command_buffer = self.data.command_buffers[image_index];
-
-        // The command buffer is reset to a clean state before
-        // recording the commands for the current frame.
-        self.device.reset_command_buffer(
-            command_buffer,
-            vk::CommandBufferResetFlags::empty()
-        )?;
+        let command_buffer = self.data.primary_command_buffers[image_index];
 
         // The command buffer can then be started recording,
         // specifying usage with some parameters:
@@ -517,36 +511,103 @@ impl App {
             .render_area(render_area)
             .clear_values(clear_values);
 
-        // The model matrix of the shader is passed as a push
-        // constant with the command buffer, but we need its
-        // bytes.
-        let time = self.start.elapsed().as_secs_f32();
-        let model = Mat4::from_axis_angle(vec3(0.0, 0.0, 1.0), time);
-        let model_bytes = std::slice::from_raw_parts(
-            model.as_ref().as_ptr() as *const u8,
-            std::mem::size_of::<Mat4>(),
-        );
-
-        // The first parameter (the same for every "cmd_xx"
-        // function) is the command buffer we are recording the
-        // command to. The second specifies the render pass
-        // info, and the third controls how the drawing
-        // commands within the render pass will be provided:
+        // Begin the render pass. The first parameter (the same
+        // for every "cmd_xx" function) is the command buffer
+        // we are recording the command to. The second
+        // specifies the render pass info, and the third
+        // controls how the drawing commands within the render
+        // pass will be provided:
         //  - INLINE: the commands are embedded in the primary
         //    command buffer, no secondary command buffer is
         //    used;
         //  - SECONDARY_COMMAND_BUFFERS: the commands will be
         //    executed from secondary command buffers.
-        self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
-    
-        // We can then bind the pipeline, specifying if it is a
-        // GRAPHICS or COMPUTE pipeline.
-        self.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.data.pipeline);
+        self.device.cmd_begin_render_pass(
+            command_buffer, 
+            &info, 
+            vk::SubpassContents::SECONDARY_COMMAND_BUFFERS
+        );
+        
+        // The actual rendering is done within the secondary
+        // command buffers (which allows rendering several
+        // models in parallel), of which we create 4.
+        let secondary_command_buffers = (0..4)
+            .map(|i| self.update_secondary_command_buffer(image_index, i))
+            .collect::<Result<Vec<_>>>()?;
 
-        // Before finally drawing the triangle, we first have
-        // to bind the vertex buffers containing the vertex
-        // data for our triangle, as well as the index buffer
-        // containing the indices for each vertex in the
+        // They can then be executed all at once (thus in
+        // parallel!) with the cmd_execute_commands method.
+        self.device.cmd_execute_commands(command_buffer, &secondary_command_buffers);
+        
+        // The render pass can then be ended, and the command
+        // buffer can stop recording.
+        self.device.cmd_end_render_pass(command_buffer);
+        self.device.end_command_buffer(command_buffer)?;
+
+        Ok(())
+    }
+
+    unsafe fn update_secondary_command_buffer(
+        &mut self,
+        image_index: usize,
+        model_index: usize,
+    ) -> Result<vk::CommandBuffer> {
+        // We are going to add another set of secondary command
+        // buffers, that will be used to render the models in
+        // the scene. 
+        self.data.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
+        let command_buffers = &mut self.data.secondary_command_buffers[image_index];
+        
+        // We will add as many secondary command buffers as
+        // there are models in the scene, so that each model
+        // can be rendered independently.
+        while model_index >= command_buffers.len() {
+            let info = vk::CommandBufferAllocateInfo::builder()
+                .command_pool(self.data.command_pools[image_index])
+                .level(vk::CommandBufferLevel::SECONDARY)
+                .command_buffer_count(1);
+
+            let command_buffer = self.device.allocate_command_buffers(&info)?[0];
+            command_buffers.push(command_buffer);
+        }
+
+        // Then we can update the buffer for the current model.
+        let command_buffer = command_buffers[model_index];
+
+        // We need to provide info on the state the secondary
+        // command buffer is inhereting: the render pass, the
+        // subpass index, and the framebuffer.
+        let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
+            .render_pass(self.data.render_pass)
+            .subpass(0)
+            .framebuffer(self.data.framebuffers[image_index]);
+
+        // Then, in the info struct we need to set the
+        // RENDER_PASS_CONTINUE flag to specify that the
+        // secondary command buffer is entirely within a single
+        // render pass.
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
+            .inheritance_info(&inheritance_info);
+
+        // We can then actually begin the command buffer. Since
+        // we are using it to render the model, it is here that
+        // we will bind the pipeline, vertex/index buffers,
+        // descriptor sets, push constants, and call the draw
+        // command.
+        self.device.begin_command_buffer(command_buffer, &info)?;
+
+        // When binding the pipeline, we have to specify if it
+        // is of GRAPHICS or COMPUTE type.
+        self.device.cmd_bind_pipeline(
+            command_buffer, 
+            vk::PipelineBindPoint::GRAPHICS, 
+            self.data.pipeline
+        );
+
+        // Then, the vertex buffers containing the vertex data
+        // for our triangle are bound, as well as the index
+        // buffer containing the indices for each vertex in the
         // buffer. The vertex buffer needs to be specified the
         // first vertex input binding to be updated (0), the
         // array of buffers to update (data.vertex_buffer) and
@@ -574,10 +635,29 @@ impl App {
             &[]
         );
         
+        // The model matrix of the shader is passed as a push
+        // constant, since it is small and changes at each
+        // frame.
+        let y = (model_index % 2) as f32 * 2.5 - 1.25;
+        let z = (model_index / 2) as f32 * -2.0 + 1.0;
+        let time = self.start.elapsed().as_secs_f32();
+        let model = Mat4::from_translation(vec3(0.0, y, z)) 
+            * Mat4::from_axis_angle(vec3(0.0, 0.0, 1.0), time);
+        let model_bytes = std::slice::from_raw_parts(
+            model.as_ref().as_ptr() as *const u8,
+            std::mem::size_of::<Mat4>(),
+        );
+
         // Push constants are embedded in the command buffer
         // and passed directly to the shader; this is the
         // reason why they are so limited in size.
-        self.device.cmd_push_constants(command_buffer, self.data.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, model_bytes);
+        self.device.cmd_push_constants(
+            command_buffer, 
+            self.data.pipeline_layout, 
+            vk::ShaderStageFlags::VERTEX, 
+            0, 
+            model_bytes
+        );
 
         // The final draw command takes the length of the index
         // buffer, the number of instances (1 in our case,
@@ -586,12 +666,9 @@ impl App {
         // offset) and the first instance index (same).
         self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
 
-        // The render pass can then be ended, and the command
-        // buffer can stop recording.
-        self.device.cmd_end_render_pass(command_buffer);
         self.device.end_command_buffer(command_buffer)?;
 
-        Ok(())
+        Ok(command_buffer)
     }
 
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {

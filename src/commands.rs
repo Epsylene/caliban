@@ -107,14 +107,32 @@ pub unsafe fn create_command_buffers(
         //    wait for the previous frame to finish before
         //    working on the next one; this is the reason why
         //    we allocate one buffer per image.
+        //
+        // We will start by allocating one primary command
+        // buffer for each image in the swapchain, that will be
+        // used to handle the main operations related to the
+        // image.
         let allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
 
         let command_buffer = device.allocate_command_buffers(&allocate_info)?[0];
-        data.command_buffers.push(command_buffer);
+        data.primary_command_buffers.push(command_buffer);
     }
+
+    // Then, for each image we will have a set of secondary
+    // command buffers. Like primary command buffers, secondary
+    // command buffers can be allocated, recorded and freed
+    // independently; however, primary command buffers cannot
+    // be executed within the same render pass. Secondary
+    // command buffers are not tied to a specific render pass
+    // instance, so they can be executed in parallel. We will
+    // have an array of as many lists of secondary command
+    // buffers as there are images in the swapchain, so that
+    // each can manage its own set of secondary command
+    // buffers.
+    data.secondary_command_buffers = vec![vec![]; data.swapchain_images.len()];
 
     info!("Command buffers created.");
     Ok(())
