@@ -1,17 +1,12 @@
 mod app;
-mod queues;
 mod devices;
+mod queues;
 mod swapchain;
-mod shaders;
-mod pipeline;
-mod buffers;
-mod vertex;
-mod descriptors;
-mod texture;
-mod commands;
 mod image;
-mod depth;
-mod model;
+mod buffers;
+mod commands;
+mod frame;
+mod sync;
 
 use vulkanalia::vk::DeviceV1_0;
 use winit::{

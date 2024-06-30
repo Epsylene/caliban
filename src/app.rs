@@ -1,30 +1,18 @@
 use crate::{
     commands::*, 
-    depth::*, 
-    descriptors::*, 
     devices::*, 
-    image::create_color_objects, 
-    model::load_model, 
-    pipeline::*, 
-    swapchain::*, 
-    texture::*, 
-    vertex::*
+    frame::*, 
+    image::*, 
+    swapchain::*,
+    sync::*,
 };
 
-use std::{
-    collections::HashSet,
-    time::Instant,
-    ptr::copy_nonoverlapping as memcpy,
-};
-
-use glam::{
-    Mat4, 
-    vec3,
-};
+use std::collections::HashSet;
 
 use winit::window::Window;
 use vulkanalia::{
     prelude::v1_0::*,
+    vk::DeviceV1_3,
     window as vk_window,
     loader::{LibloadingLoader, LIBRARY},
     Version,
@@ -38,115 +26,21 @@ use log::*;
 pub const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 pub const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
+pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 #[derive(Default)]
 pub struct AppData {
-    // - Surface: the Vulkan surface object, an abstraction of
-    //   the native window object on which to render images
-    // - Debug messenger: a messenger object for handling
-    //   callbacks from the validation layers (that is, to print
-    //   messages from the validation layers with our log system
-    //   instead of the standard output)
-    // - Physical device: the physical device to use for the
-    //   graphics, in other words the graphics card (most of the
-    //   time)
-    // - Graphics queue: where graphics commands are sent to
-    //   while waiting for execution
-    // - Presentation queue: queue for rendering images to the
-    //   surface
-    // - Swapchain: an abstraction for an array of presentable
-    //   images associated with a surface
-    // - Swapchain images: the images controlled by the
-    //   swapchain
-    // - Swapchain format: the format of the swapchain images
-    // - Swapchain extent: the resolution of the swapchain
-    //   images
-    // - Swapchain image views: views of the swapchain images,
-    //   which describe how they should be accessed
-    // - Render pass: the render pass describing the different
-    //   framebuffer attachments and their usage
-    // - Pipeline layout: the set of ressources that can be
-    //   accessed by the pipeline
-    // - Pipeline: the graphics pipeline, the succession of
-    //   rendering stages in a single pass
-    // - Framebuffer: collection of memory attachments used by a
-    //   render pass instance
-    // - Command buffers: buffers containing commands which can
-    //   be submitted to a queue for execution
-    // - Command pools: memory pools for sets of command
-    //   buffers
-    // - Semaphores: GPU-GPU synchronization primitive to insert
-    //   a dependency within or accross command queue operations
-    // - Fences: CPU-GPU synchronization primitive to insert a
-    //   dependency between queues and the host
-    // - Vertex buffer: buffer containing vertex data to upload
-    //   to the GPU
-    // - Device memory: opaque handle to device memory
-    // - Index buffer: buffer containing the indices for each
-    //   vertex in the vertex buffer
-    // - Descriptor set layout: the layout of a descriptor set
-    //   object, a collection of opaque structures representing
-    //   a shader resource each
-    // - Descriptor sets: the actual descriptors sets bound to
-    //   the pipeline, one per swapchain image
-    // - Descriptor pool: memory pool for the descriptor sets
-    // - Uniform buffers: ressource buffers used for read-only
-    //   global data in shaders
-    // - Texture image: image used as a texture in the shaders
-    // - Texture sampler: sampler object used to sample a
-    //   texture
-    // - Depth image: buffer used for depth testing
-    // - Vertices/indices: vertex and index data for the
-    //   current loaded model
-    // - Mip levels: the number of mipmap levels in the texture
-    // - MSAA samples: the number of samples to use for MSAA
-    //   (antialisaing)
-    // - Color image: render target for the MSAA operation
     pub surface: vk::SurfaceKHR,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
     pub physical_device: vk::PhysicalDevice,
     pub graphics_queue: vk::Queue,
-    pub present_queue: vk::Queue,
+    pub graphics_queue_family: u32,
     pub swapchain: vk::SwapchainKHR,
-    pub swapchain_images: Vec<vk::Image>,
     pub swapchain_format: vk::Format,
-    pub swapchain_extent: vk::Extent2D,
+    pub swapchain_images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
-    pub render_pass: vk::RenderPass,
-    pub pipeline_layout: vk::PipelineLayout,
-    pub pipeline: vk::Pipeline,
-    pub framebuffers: Vec<vk::Framebuffer>,
-    pub primary_command_buffers: Vec<vk::CommandBuffer>,
-    pub secondary_command_buffers: Vec<Vec<vk::CommandBuffer>>,
-    pub global_command_pool: vk::CommandPool,
-    pub command_pools: Vec<vk::CommandPool>,
-    pub image_available_semaphores: Vec<vk::Semaphore>,
-    pub render_finished_semaphores: Vec<vk::Semaphore>,
-    pub rendering_fences: Vec<vk::Fence>,
-    pub images_in_flight: Vec<vk::Fence>,
-    pub vertex_buffer: vk::Buffer,
-    pub vertex_buffer_memory: vk::DeviceMemory,
-    pub index_buffer: vk::Buffer,
-    pub index_buffer_memory: vk::DeviceMemory,
-    pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_sets: Vec<vk::DescriptorSet>,
-    pub descriptor_pool: vk::DescriptorPool,
-    pub uniform_buffers: Vec<vk::Buffer>,
-    pub uniform_buffers_memory: Vec<vk::DeviceMemory>,
-    pub texture_image: vk::Image,
-    pub texture_image_memory: vk::DeviceMemory,
-    pub texture_image_view: vk::ImageView,
-    pub texture_sampler: vk::Sampler,
-    pub depth_image: vk::Image,
-    pub depth_image_memory: vk::DeviceMemory,
-    pub depth_image_view: vk::ImageView,
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
-    pub mip_levels: u32,
-    pub msaa_samples: vk::SampleCountFlags,
-    pub color_image: vk::Image,
-    pub color_image_memory: vk::DeviceMemory,
-    pub color_image_view: vk::ImageView,
+    pub swapchain_extent: vk::Extent2D,
+    pub frames: [FrameData; MAX_FRAMES_IN_FLIGHT],
 }
 
 pub struct App {
@@ -167,15 +61,14 @@ pub struct App {
     pub device: Device,
     frame: usize,
     pub resized: bool,
-    start: Instant,
 }
 
 impl App {
     pub unsafe fn create(window: &Window) -> Result<Self> {
         // To create a Vulkan instance, we first need a special
-        // function loader to load the initial commands from the
-        // Vulkan DLL. Next we create an entry point using this
-        // loader, and finally use the entry point, window
+        // function loader to load the initial commands from
+        // the Vulkan DLL. Next we create an entry point using
+        // this loader, and finally use the entry point, window
         // handle and application data to create the Vulkan
         // instance.
         let loader = LibloadingLoader::new(LIBRARY)?;
@@ -184,8 +77,8 @@ impl App {
         let instance = create_instance(window, &entry, &mut data)?;
         
         // Since Vulkan is a platform agnostic API, it does not
-        // interface directly with the window system on its own;
-        // instead, it exposes surface objects, abstract
+        // interface directly with the window system on its
+        // own; instead, it exposes surface objects, abstract
         // representations of native window objects to render
         // images on. As with any other Vulkan object, the
         // creation of the surface involves first filling an
@@ -211,75 +104,42 @@ impl App {
         create_swapchain(window, &instance, &device, &mut data)?;
         create_swapchain_image_views(&device, &mut data)?;
 
-        // Then enter the graphics pipeline, the succession of
-        // rendering stages that go from taking a bunch of
-        // vertices to presenting a properly shaded set of
-        // pixels to the screen. Before that, however, we need
-        // to tell Vulkan about the framebuffer attachments
-        // that will be used while rendering: the object
-        // containing this information is called a "render
-        // pass". The descriptor set layout, specifying the
-        // types of ressources accessed by the pipeline in
-        // order to be used in the shaders, is also created
-        // here.
-        create_render_pass(&instance, &device, &mut data)?;
-        create_descriptor_set_layout(&device, &mut data)?;
-        create_pipeline(&device, &mut data)?;
-
         // The final step before actual rendering is to:
-        //  - Create the command pool, to allocate memory for
-        // the command buffers; 
-        //  - The color objects (buffer for the MSAA operation)
-        //  - The depth objects (depth buffer and related
-        // objects), to provide depth information to the scene; 
-        //  - The texture image and its view; 
-        //  - The framebuffers, which we use to bind the
-        // attachments specified during render pass creation;
-        //  - Load the OBJ model to render; 
-        //  - Allocate the vertex buffers and index buffers, to
-        // later populate vertex data for the GPU; 
-        //  - The uniform buffers to send ressources to the
-        // shaders; 
-        //  - The descriptor pool to allocate the descriptor
-        // sets these ressources are bound to; 
-        //  - The actual descriptors sets;
-        //  - The command buffers (allocated in a command
-        // pool), to record them and submit them to the GPU.
+        //  - Create the command pools, to allocate memory for
+        // the command buffers;
+        //  - Create the command buffers, to record the
+        //    commands that will be executed on the GPU.
         create_command_pools(&instance, &device, &mut data)?;
-        create_color_objects(&instance, &device, &mut data)?;
-        create_depth_objects(&instance, &device, &mut data)?;
-        create_framebuffers(&device, &mut data)?;
-        create_texture_image("res/viking_room.png", &instance, &device, &mut data)?;
-        create_texture_image_view(&device, &mut data)?;
-        create_texture_sampler(&device, &mut data)?;
-        load_model("res/viking_room.obj", &mut data)?;
-        create_vertex_buffer(&instance, &device, &mut data)?;
-        create_index_buffer(&instance, &device, &mut data)?;
-        create_uniform_buffer(&instance, &device, &mut data)?;
-        create_descriptor_pool(&device, &mut data)?;
-        create_descriptor_sets(&device, &mut data)?;
         create_command_buffers(&device, &mut data)?;
 
-        // To handle CPU-GPU and GPU-GPU synchronization, we
-        // have to create several sync objects like fences and
-        // semaphores.
+        // Finally, we create the synchronization objects to
+        // ensure that the CPU and GPU are in sync when
+        // rendering.
         create_sync_objects(&device, &mut data)?;
 
-        Ok(Self { entry, instance, data, device, frame: 0, resized: false, start: Instant::now() })
+        Ok(Self { entry, instance, data, device, frame: 0, resized: false })
     }
 
     pub unsafe fn render(&mut self, window: &Window) -> Result<()> {
-        // The first step in rendering The Triangle (TM) is to
-        // acquire an image on the swapchain. Before that,
-        // however, we need to wait for the previous frame to
-        // finish rendering, which is done by waiting for the
-        // fence corresponding to that frame.
+        // The first step is to acquire an image on the
+        // swapchain. Before that, however, we need to wait for
+        // the previous frame to finish rendering, which is
+        // done by waiting for the fence corresponding to that
+        // frame. The wait_for_fences function also takes a
+        // boolean value to wait either for all or any of the
+        // fences to be signaled, and a timeout value to wait
+        // for.
+        let frame = &mut self.data.frames[self.frame];
         self.device.wait_for_fences(
-            &[self.data.rendering_fences[self.frame]], 
+            &[frame.in_flight_fence],
             true, 
             u64::MAX
         )?;
 
+        // After completing, we have to restore the fence to
+        // its unsignaled state for the next frame.
+        self.device.reset_fences(&[frame.in_flight_fence])?;
+        
         // The "acquire next image" method takes in the
         // swapchain from which to acquire the image, a timeout
         // value specifying how long the function is to wait if
@@ -287,15 +147,14 @@ impl App {
         // and/or a fence to signal when the image is acquired,
         // and returns a result on the index of the next
         // available presentable image in the swapchain.
-        let result = self
-            .device
+        let index_result = self.device
             .acquire_next_image_khr(
                 self.data.swapchain,
                 u64::MAX,
-                self.data.image_available_semaphores[self.frame],
+                frame.image_available_semaphore,
                 vk::Fence::null()
             );
-
+        
         // The result contains the index of the acquired image
         // in the swapchain, but if the swapchain is no longer
         // adequate for rendering (for example, if the window
@@ -306,125 +165,14 @@ impl App {
         // swapchain can still be used, but the surface
         // properties are no longer matched exactly). In the
         // first case, we have to recreate the swapchain.
-        let image_index = match result {
-            Ok((image_index, _)) => image_index as usize,
-            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => return self.recreate_swapchain(window),
-            Err(e) => return Err(anyhow!("Failed to acquire next image: {}", e)),
+        let image_index = match index_result {
+            Ok((index, _)) => index as usize,
+            Err(vk::ErrorCode::OUT_OF_DATE_KHR) => {
+                return Err(anyhow!("Swapchain out of date."));
+            },
+            Err(e) => return Err(anyhow!("Failed to acquire next image: {:?}", e)),
         };
 
-        // If the image is already in flight, we wait for the
-        // fence corresponding to the acquired image to be
-        // signaled (in other words, we wait for it to be
-        // available).
-        if !self.data.images_in_flight[image_index].is_null() {
-            self.device.wait_for_fences(
-                &[self.data.images_in_flight[image_index]], 
-                true, 
-                u64::MAX
-            )?;
-        }
-
-        // Once it has been signaled, the image is in render by
-        // the current frame, so we set the "image in flight"
-        // fence to the "rendering" fence for this frame.
-        self.data.images_in_flight[image_index] = self.data.rendering_fences[self.frame];
-
-        // When the image is signaled as available and set to
-        // the "render" state, we can also update the command
-        // buffer and uniform buffer for the image, since it
-        // means that the previous one has completed rendering.
-        self.update_primary_command_buffer(image_index)?;
-        self.update_uniform_buffer(image_index)?;
-
-        // We can now configure the queue submit operation with
-        // a submit info struct, containing:
-        //  - wait_semaphores: an array of semaphores upon which
-        //    to wait before execution begins (here the "image
-        //    available" semaphore);
-        //  - wait_dst_stage_mask: an array of pipeline stages
-        //    at which each corresponding semaphore wait will
-        //    occur (here the color attachment output stage,
-        //    after blending, when the final color values are
-        //    output from the pipeline, since we want to wait
-        //    writing colors to the image until it is truly
-        //    available);
-        //  - command_buffers: the command buffer handles to
-        //    execute in the batch (here the command buffer at
-        //    the index of the acquired image);
-        //  - signal_semaphores: array of semaphores that will
-        //    be signaled when the command buffers have
-        //    completed execution (the "render finished"
-        //    semaphore).
-        let image_available = &[self.data.image_available_semaphores[self.frame]];
-        let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = &[self.data.primary_command_buffers[image_index]];
-        let render_finished = &[self.data.render_finished_semaphores[self.frame]];
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(image_available)
-            .wait_dst_stage_mask(wait_stages)
-            .command_buffers(command_buffers)
-            .signal_semaphores(render_finished);
-
-        // The rendering fences are then restored to their
-        // unsignaled state.
-        self.device.reset_fences(&[self.data.rendering_fences[self.frame]])?;
-
-        // Lastly, the queue and its info can be submitted, as
-        // well as the fence corresponding to the current frame.
-        self.device.queue_submit(
-            self.data.graphics_queue, 
-            &[submit_info], 
-            self.data.rendering_fences[self.frame]
-        )?;
-
-        // The final step of drawing a frame is submitting the
-        // result back to the swapchain to have it eventually
-        // show up on the screen. Presentation is configured
-        // with an info struct detailing:
-        //  - wait_semaphores: the semaphores on which to wait
-        //    before presentation can happen, which are the
-        //    "render finished" semaphores from before;
-        //  - swapchains: the swapchains to present images to;
-        //  - image_indices: the index of the image to present
-        //    for each swapchain.
-        let swapchains = &[self.data.swapchain];
-        let image_indices = &[image_index as u32];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(render_finished)
-            .swapchains(swapchains)
-            .image_indices(image_indices);
-
-        // Just like when we acquired the image, presenting
-        // images returns a result on the optimality of the
-        // swapchain.
-        let result = self.device.queue_present_khr(self.data.present_queue, &present_info);
-        let changed = result == Ok(vk::SuccessCode::SUBOPTIMAL_KHR)
-            || result == Err(vk::ErrorCode::OUT_OF_DATE_KHR);
-
-        // Then, if the swapchain is suboptimal or out-of-date,
-        // we recreate it. It is important to do this after
-        // presentation to ensure that the semaphores are in a
-        // consistent state, otherwise a signalled semaphore may
-        // never be properly waited upon. We also check on the
-        // flag 'resized' in case the platform does not trigger
-        // an OUT_OF_DATE error when the window is resized.
-        if changed || self.resized {
-            self.resized = false;
-            self.recreate_swapchain(window)?;
-        } else if let Err(e) = result {
-            return Err(anyhow!("Failed to present queue: {}", e));
-        }
-        
-        // The current frame in the swapchain is increased by 1
-        // within the MAX_FRAMES_IN_FLIGHT limit, which is the
-        // maximum number of frames processed simultaneously.
-        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
-        debug!("Rendering...");
-        Ok(())
-    }
-
-    unsafe fn update_primary_command_buffer(&mut self, image_index: usize) -> Result<()> {
         // Command buffers are allocated from pools and
         // recorded with commands to send to the GPU. Changing
         // commands dynamically requires changing the buffers,
@@ -440,22 +188,16 @@ impl App {
         //     involves repeated calls to the CPU for
         //     allocating and deallocating the memory.
         //  3) Reset the command pool, which resets all the
-        //     buffers allocated from it in one go. This is
+        //     buffers allocated from it in one go. This can be
         //     even more performant than method 1 (by a factor
-        //     of 2). 
+        //     of 2).
         //
-        // We will use the third method here. This means that
-        // we need to have separate command pools for each
-        // image: with a single pool, we can't reset all the
-        // buffers at the same time, since some will be
-        // in-flight concurrently at different times. Then, at
-        // each update, the command pool for each image (and
-        // the buffers within) is reset, and new commands can
-        // instantly be recorded.
-        let command_pool = self.data.command_pools[image_index];
-        self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
-
-        let command_buffer = self.data.primary_command_buffers[image_index];
+        // We will start by using the first method, since we
+        // only have one buffer per frame.
+        self.device.reset_command_buffer(
+            frame.main_buffer, 
+            vk::CommandBufferResetFlags::empty()
+        )?;
 
         // The command buffer can then be started recording,
         // specifying usage with some parameters:
@@ -475,320 +217,123 @@ impl App {
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .inheritance_info(&inheritance);
 
-        self.device.begin_command_buffer(command_buffer, &info)?;
+        self.device.begin_command_buffer(frame.main_buffer, &info)?;
 
-        // Now that the command buffer is recording, we can
-        // start the render pass, by specifying the render area
-        // (the swapchain extent, which is the size of the
-        // frame)...
-        let render_area = vk::Rect2D::builder()
-            .offset(vk::Offset2D::default())
-            .extent(self.data.swapchain_extent);
-
-        // ...the clear color for the color attachment
-        // (black)...
-        let color_clear_value = vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
-            },
-        };
-
-        // ...for the depth (1.0, the far view plane) and the
-        // stencil (0, the discard value) attachment...
-        let depth_clear_value = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue {
-                depth: 1.0,
-                stencil: 0,
-            },
-        };
-
-        // ...and finally filling the info struct. The render
-        // pass can then begin with the corresponding command.
-        let clear_values = &[color_clear_value, depth_clear_value];
-        let info = vk::RenderPassBeginInfo::builder()
-            .render_pass(self.data.render_pass)
-            .framebuffer(self.data.framebuffers[image_index])
-            .render_area(render_area)
-            .clear_values(clear_values);
-
-        // Begin the render pass. The first parameter (the same
-        // for every "cmd_xx" function) is the command buffer
-        // we are recording the command to. The second
-        // specifies the render pass info, and the third
-        // controls how the drawing commands within the render
-        // pass will be provided:
-        //  - INLINE: the commands are embedded in the primary
-        //    command buffer, no secondary command buffer is
-        //    used;
-        //  - SECONDARY_COMMAND_BUFFERS: the commands will be
-        //    executed from secondary command buffers.
-        self.device.cmd_begin_render_pass(
-            command_buffer, 
-            &info, 
-            vk::SubpassContents::SECONDARY_COMMAND_BUFFERS
-        );
-        
-        // The actual rendering is done within the secondary
-        // command buffers (which allows rendering several
-        // models in parallel), of which we create 4.
-        let secondary_command_buffers = (0..4)
-            .map(|i| self.update_secondary_command_buffer(image_index, i))
-            .collect::<Result<Vec<_>>>()?;
-
-        // They can then be executed all at once (thus in
-        // parallel!) with the cmd_execute_commands method.
-        self.device.cmd_execute_commands(command_buffer, &secondary_command_buffers);
-        
-        // The render pass can then be ended, and the command
-        // buffer can stop recording.
-        self.device.cmd_end_render_pass(command_buffer);
-        self.device.end_command_buffer(command_buffer)?;
-
-        Ok(())
-    }
-
-    unsafe fn update_secondary_command_buffer(
-        &mut self,
-        image_index: usize,
-        model_index: usize,
-    ) -> Result<vk::CommandBuffer> {
-        // We are going to add another set of secondary command
-        // buffers, that will be used to render the models in
-        // the scene. 
-        self.data.secondary_command_buffers.resize_with(image_index + 1, Vec::new);
-        let command_buffers = &mut self.data.secondary_command_buffers[image_index];
-        
-        // We will add as many secondary command buffers as
-        // there are models in the scene, so that each model
-        // can be rendered independently.
-        while model_index >= command_buffers.len() {
-            let info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(self.data.command_pools[image_index])
-                .level(vk::CommandBufferLevel::SECONDARY)
-                .command_buffer_count(1);
-
-            let command_buffer = self.device.allocate_command_buffers(&info)?[0];
-            command_buffers.push(command_buffer);
-        }
-
-        // Then we can update the buffer for the current model.
-        let command_buffer = command_buffers[model_index];
-
-        // We need to provide info on the state the secondary
-        // command buffer is inhereting: the render pass, the
-        // subpass index, and the framebuffer.
-        let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
-            .render_pass(self.data.render_pass)
-            .subpass(0)
-            .framebuffer(self.data.framebuffers[image_index]);
-
-        // Then, in the info struct we need to set the
-        // RENDER_PASS_CONTINUE flag to specify that the
-        // secondary command buffer is entirely within a single
-        // render pass.
-        let info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE)
-            .inheritance_info(&inheritance_info);
-
-        // We can then actually begin the command buffer. Since
-        // we are using it to render the model, it is here that
-        // we will bind the pipeline, vertex/index buffers,
-        // descriptor sets, push constants, and call the draw
-        // command.
-        self.device.begin_command_buffer(command_buffer, &info)?;
-
-        // When binding the pipeline, we have to specify if it
-        // is of GRAPHICS or COMPUTE type.
-        self.device.cmd_bind_pipeline(
-            command_buffer, 
-            vk::PipelineBindPoint::GRAPHICS, 
-            self.data.pipeline
-        );
-
-        // Then, the vertex buffers containing the vertex data
-        // for our triangle are bound, as well as the index
-        // buffer containing the indices for each vertex in the
-        // buffer. The vertex buffer needs to be specified the
-        // first vertex input binding to be updated (0), the
-        // array of buffers to update (data.vertex_buffer) and
-        // the offsets in the buffers (0 here). The index
-        // buffer, apart from its data, takes an offset (0 too)
-        // and a type size (UINT32 in our case).
-        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
-        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
-        
-        // Then we can bind the descriptor sets holding the
-        // resources passed to the shaders like uniform
-        // buffers, specifying the pipeline point they will be
-        // used by (GRAPHICS), the pipeline layout, the first
-        // set to be bound (0) and the array of sets to bind
-        // (in our case the descriptor set attached to the
-        // current image). The last parameter is an array of
-        // offsets used by dynamic descriptors, which we will
-        // not use for now.
-        self.device.cmd_bind_descriptor_sets(
-            command_buffer, 
-            vk::PipelineBindPoint::GRAPHICS, 
-            self.data.pipeline_layout, 
-            0, 
-            &[self.data.descriptor_sets[image_index]],
-            &[]
-        );
-        
-        // The model matrix of the shader is passed as a push
-        // constant, since it is small and changes at each
-        // frame.
-        let y = (model_index % 2) as f32 * 2.5 - 1.25;
-        let z = (model_index / 2) as f32 * -2.0 + 1.0;
-        let time = self.start.elapsed().as_secs_f32();
-        let model = Mat4::from_translation(vec3(0.0, y, z)) 
-            * Mat4::from_axis_angle(vec3(0.0, 0.0, 1.0), time);
-        let model_bytes = std::slice::from_raw_parts(
-            model.as_ref().as_ptr() as *const u8,
-            std::mem::size_of::<Mat4>(),
-        );
-
-        // Push constants are embedded in the command buffer
-        // and passed directly to the shader; this is the
-        // reason why they are so limited in size.
-        self.device.cmd_push_constants(
-            command_buffer, 
-            self.data.pipeline_layout, 
-            vk::ShaderStageFlags::VERTEX, 
-            0, 
-            model_bytes
-        );
-
-        // The final draw command takes the length of the index
-        // buffer, the number of instances (1 in our case,
-        // where we are not doing instanced rendering), the
-        // first vertex index in the vertex buffer (0, no
-        // offset) and the first instance index (same).
-        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
-
-        self.device.end_command_buffer(command_buffer)?;
-
-        Ok(command_buffer)
-    }
-
-    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
-        // The uniform buffer we are sending is comprised of a
-        // view matrix looking from above at (2,2,2)...
-        let view = Mat4::look_at_rh(
-            vec3(2.0, 2.0, 2.0), 
-            vec3(0.0, 0.0, 0.0), 
-            vec3(0.0, 0.0, 1.0));
-
-        // ...and a perspective projection matrix for a 45º
-        // FOV, an aspect ratio matching that of the window,
-        // and a near and far plane at 0.1 and 10.0.
-        let mut proj = Mat4::perspective_rh(
-            std::f32::consts::FRAC_PI_4, 
-            self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32, 
-            0.1, 
-            10.0
-        );
-
-        proj.y_axis.y *= -1.0;
-
-        // Those can then be combined in the MVP object...
-        let vp = Vp { view, proj };
-
-        // ...and mapped to the uniform buffer memory (that is,
-        // the uniform buffer in the device memory) for the
-        // current image in the swapchain...
-        let memory = self.device.map_memory(
-            self.data.uniform_buffers_memory[image_index],
-            0, 
-            std::mem::size_of::<Vp>() as u64, 
-            vk::MemoryMapFlags::empty()
+        // Then, we can start by transitioning the swapchain
+        // image into a drawable layout, to clear the color.
+        let image = self.data.swapchain_images[image_index];
+        transition_image_layout(
+            &self.device, 
+            frame.main_buffer, 
+            image,
+            vk::ImageLayout::UNDEFINED, 
+            vk::ImageLayout::GENERAL
         )?;
 
-        // ...and finally copied.
-        memcpy(&vp, memory.cast(), 1);
-        self.device.unmap_memory(self.data.uniform_buffers_memory[image_index]);
-        
-        debug!("Updated uniform buffer.");
-        Ok(())
-    }
+        // We will clear this image with a 120-frame flashing
+        // blue color; the subresource range affected is the
+        // color bit.
+        let clear_color = vk::ClearColorValue {
+            float32: [0.0, 0.0, 1.0, 1.0],
+        };
 
-    unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
-        // Even with a fully functional swapchain, it is
-        // possible for the window surface to change such that
-        // the swapchain is no longer compatible with it (after
-        // a window resize, for example). The swapchain and all
-        // the objects that depend on it or the window must then
-        // be recreated. We will first call a function to wait
-        // on the device until all ressources are free to use,
-        // and destroy the swapchain before recreating it.
-        self.device.device_wait_idle()?;
-        self.destroy_swapchain();
+        let ranges = &[subresource_range(vk::ImageAspectFlags::COLOR)];
+        self.device.cmd_clear_color_image(
+            frame.main_buffer, 
+            image, 
+            vk::ImageLayout::GENERAL,
+            &clear_color, 
+            ranges
+        );
+
+        // Now, the image can be transitioned again for
+        // presentation to the surface.
+        transition_image_layout(
+            &self.device, 
+            frame.main_buffer,
+            image, 
+            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::PRESENT_SRC_KHR 
+        )?;
+
+        // All commands have been recorded, so the command
+        // buffer can be ended.
+        self.device.end_command_buffer(frame.main_buffer)?;
+
+        // The next step is to prepare the submission for the
+        // queue. There are two semaphores to signal, the
+        // "image available" semaphore, which waits for
+        // COLOR_ATTACHMENT_OUTPUT, the stage where final color
+        // values are output from the pipeline...
+        let wait_info = &[semaphore_submit(
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            frame.image_available_semaphore
+        )];
+
+        // ...and the "render finished" semaphore, which
+        // signals the end of the execution of all graphics
+        // pipeline stages.
+        let signal_info = &[semaphore_submit(
+            vk::PipelineStageFlags2::ALL_GRAPHICS,
+            frame.render_finished_semaphore
+        )];
+
+        // Furthermore, we have submit info on the command
+        // buffer that is to be executed.
+        let cmd_info = &[vk::CommandBufferSubmitInfo::builder()
+            .command_buffer(frame.main_buffer)];
+
+        // We can then put these together and actually submit
+        // the queue.
+        let submit_info = vk::SubmitInfo2::builder()
+            .wait_semaphore_infos(wait_info)
+            .signal_semaphore_infos(signal_info)
+            .command_buffer_infos(cmd_info);
+
+        // The "in-flight fence" is set by the queue submit
+        // operation so that when rendering of the next frame
+        // is started on the CPU, it will wait for the GPU to
+        // finish the previous frame before submitting
+        // commands.
+        self.device.queue_submit2(
+            self.data.graphics_queue,
+            &[submit_info],
+            frame.in_flight_fence
+        )?;
+
+        // The final step is to present the image to the
+        // surface. The present info struct takes the
+        // semaphores to wait on and signal, the swapchain to
+        // present to, and the index of the image to present.
+        let wait_semaphores = &[frame.render_finished_semaphore];
+        let swapchains = &[self.data.swapchain];
+        let image_indices = &[image_index as u32];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(wait_semaphores)
+            .swapchains(swapchains)
+            .image_indices(image_indices);
+
+        // The present operation is then executed on the queue,
+        // and the frame counter is incremented.
+        self.device.queue_present_khr(self.data.graphics_queue, &present_info)?;
         
-        // Then, the swapchain is recreated. The images views
-        // are recreated because they depend on the swapchain
-        // images; the render pass is recreated because it
-        // depends on the format of the swapchain images; the
-        // pipeline is recreated because it defines viewport
-        // and scissor rectangle sizes (note that it is
-        // possible to define these as dynamic state to avoid
-        // redefining them); depth objects, framebuffers and
-        // uniform buffers can then be recreated, and finally
-        // descriptors and command buffers.
-        create_swapchain(window, &self.instance, &self.device, &mut self.data)?;
-        create_swapchain_image_views(&self.device, &mut self.data)?;
-        create_render_pass(&self.instance, &self.device, &mut self.data)?;
-        create_pipeline(&self.device, &mut self.data)?;
-        create_color_objects(&self.instance, &self.device, &mut self.data)?;
-        create_depth_objects(&self.instance, &self.device, &mut self.data)?;
-        create_framebuffers(&self.device, &mut self.data)?;
-        create_uniform_buffer(&self.instance, &self.device, &mut self.data)?;
-        create_descriptor_pool(&self.device, &mut self.data)?;
-        create_descriptor_sets(&self.device, &mut self.data)?;
-        create_command_buffers(&self.device, &mut self.data)?;
-        
-        // Lastly, we resize our list of fences for the new
-        // swapchain, since there is a possibility that there
-        // might be a different number of swapchain images after
-        // recreation.
-        self.data
-            .images_in_flight
-            .resize(self.data.swapchain_images.len(), vk::Fence::null());
+        self.frame += 1;
+        self.frame %= MAX_FRAMES_IN_FLIGHT;
 
         Ok(())
     }
 
     pub unsafe fn destroy(&mut self) {
-        self.destroy_swapchain();
+        destroy_swapchain(&self.device, &self.data);
 
-        self.device.destroy_image(self.data.texture_image, None);
-        self.device.destroy_image_view(self.data.texture_image_view, None);
-        self.device.destroy_sampler(self.data.texture_sampler, None);
-        self.device.free_memory(self.data.texture_image_memory, None);
-        self.device.destroy_descriptor_set_layout(self.data.descriptor_set_layout, None);
-        self.device.destroy_buffer(self.data.index_buffer, None);
-        self.device.free_memory(self.data.index_buffer_memory, None);
-        self.device.destroy_buffer(self.data.vertex_buffer, None);
-        self.device.free_memory(self.data.vertex_buffer_memory, None);
+        self.data.frames
+            .iter()
+            .for_each(|f| self.device.destroy_command_pool(f.command_pool, None));
 
-        self.data.rendering_fences
-            .iter()
-            .for_each(|&f| self.device.destroy_fence(f, None));
-        
-        self.data.render_finished_semaphores
-            .iter()
-            .for_each(|&s| self.device.destroy_semaphore(s, None));
-        self.data.image_available_semaphores
-            .iter()
-            .for_each(|&s| self.device.destroy_semaphore(s, None));
-        
-        self.data.command_pools
-            .iter()
-            .for_each(|&p| self.device.destroy_command_pool(p, None));
-        
-        self.device.destroy_command_pool(self.data.global_command_pool, None);
-        
-        self.device.destroy_device(None);
+        destroy_sync_objects(&self.device, &mut self.data);
+
         self.instance.destroy_surface_khr(self.data.surface, None);
+        self.device.destroy_device(None);
 
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.debug_messenger, None);
@@ -797,62 +342,19 @@ impl App {
         self.instance.destroy_instance(None);
         info!("Destroyed the Vulkan instance.");
     }
-
-    unsafe fn destroy_swapchain(&mut self) {
-        // Color image
-        self.device.destroy_image_view(self.data.color_image_view, None);
-        self.device.destroy_image(self.data.color_image, None);
-        self.device.free_memory(self.data.color_image_memory, None);
-        
-        // Depth image
-        self.device.destroy_image_view(self.data.depth_image_view, None);
-        self.device.destroy_image(self.data.depth_image, None);
-        self.device.free_memory(self.data.depth_image_memory, None);
-        
-        // Descriptor pool
-        self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
-
-        // Uniform buffers
-        self.data.uniform_buffers
-            .iter()
-            .for_each(|&b| self.device.destroy_buffer(b, None));
-
-        self.data.uniform_buffers_memory
-            .iter()
-            .for_each(|&m| self.device.free_memory(m, None));
-
-        // Framebuffers
-        self.data.framebuffers
-            .iter()
-            .for_each(|&f| self.device.destroy_framebuffer(f, None));
-
-        // Command buffers, pipeline, render pass
-        self.device.destroy_pipeline(self.data.pipeline, None);
-        self.device.destroy_pipeline_layout(self.data.pipeline_layout, None);
-        self.device.destroy_render_pass(self.data.render_pass, None);
-        
-        // Swapchain image views
-        self.data.swapchain_image_views
-            .iter()
-            .for_each(|&view| self.device.destroy_image_view(view, None));
-        
-        // Swapchain
-        self.device.destroy_swapchain_khr(self.data.swapchain, None);
-
-        info!("Destroyed the swapchain and related objects.");
-    }
 }
 
 unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) -> Result<Instance> {
     // Validation layers: because the Vulkan API is designed
-    // around the idea of minimal driver overhead, there is very
-    // little default error checking. Instead, Vulkan provides
-    // "validation layers", which are optional components that
-    // hook into Vulkan function calls to apply additional
-    // checks and debug operations. Validation layers can only
-    // be used if they have been installed onto the system, for
-    // example as part of the LunarG Vulkan SDK. We first need
-    // to get the list of available layers...
+    // around the idea of minimal driver overhead, there is
+    // very little default error checking. Instead, Vulkan
+    // provides "validation layers", which are optional
+    // components that hook into Vulkan function calls to apply
+    // additional checks and debug operations. Validation
+    // layers can only be used if they have been installed onto
+    // the system, for example as part of the LunarG Vulkan
+    // SDK. We first need to get the list of available
+    // layers...
     let available_layers = entry
         .enumerate_instance_layer_properties()?
         .iter()
@@ -872,27 +374,26 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         Vec::new()
     };
 
-    // Application info: application name and version,
-    // engine name and version, and Vulkan API version. The
-    // Vulkan API version is required and must be set to
-    // 1.0.0 or greater.
+    // Application info: application name and version, engine
+    // name and version, and Vulkan API version. The Vulkan API
+    // version is required and must be set to 1.0.0 or greater.
     let application_info = vk::ApplicationInfo::builder()
         .application_name(b"caliban-app\0")
         .application_version(vk::make_version(1, 0, 0))
         .engine_name(b"caliban\0")
         .engine_version(vk::make_version(1, 0, 0))
-        .api_version(vk::make_version(1, 0, 0));
+        .api_version(vk::make_version(1, 3, 0));
 
-    // Extensions: enumerate the required extensions for
-    // window integration and convert them to C strings.
+    // Extensions: enumerate the required extensions for window
+    // integration and convert them to C strings.
     let mut extensions = vk_window::get_required_instance_extensions(window)
         .iter()
         .map(|e| e.as_ptr())
         .collect::<Vec<_>>();
 
-    // If the validation layers are enabled, we add the
-    // debut utils extension to set up a callback for the
-    // validation layer messages.
+    // If the validation layers are enabled, we add the debut
+    // utils extension to set up a callback for the validation
+    // layer messages.
     if VALIDATION_ENABLED {
         extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
     }
@@ -901,8 +402,8 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     // implementation, and need since v1.3.216 of the Vulkan
     // API to enable special portability extensions. One of
     // those platforms is none other than macOS, so we check
-    // the target OS and the Vulkan API version to enable
-    // those extensions if needed.
+    // the target OS and the Vulkan API version to enable those
+    // extensions if needed.
     let flags = if
         cfg!(target_os = "macos") &&
         entry.version()? >= PORTABILITY_MACOS_VERSION
@@ -917,18 +418,17 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
         vk::InstanceCreateFlags::empty()
     };
 
-    // Instance info: combines the application and
-    // extensions info, and enables the given layers
+    // Instance info: combines the application and extensions
+    // info, and enables the given layers
     let mut info = vk::InstanceCreateInfo::builder()
         .application_info(&application_info)
         .enabled_layer_names(&layers)
         .enabled_extension_names(&extensions)
         .flags(flags);
 
-    // Debug info: set up a debug messenger for the
-    // validation layers, that calls our debug callback
-    // function to print messages for all severity levels
-    // and types of events.
+    // Debug info: set up a debug messenger for the validation
+    // layers, that calls our debug callback function to print
+    // messages for all severity levels and types of events.
     let mut debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
         .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
         .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
@@ -937,92 +437,26 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut AppData) ->
     if VALIDATION_ENABLED {
         // Vulkan structs, like the instance info, have the
         // ability to be extended with other structs, which can
-        // in turn be extended with other structs, and so on. In
-        // this case, we are extending the instance info with
-        // the debug info if the validation layers are enabled,
-        // which will be used to create the debug messenger.
+        // in turn be extended with other structs, and so on.
+        // In this case, we are extending the instance info
+        // with the debug info if the validation layers are
+        // enabled, which will be used to create the debug
+        // messenger.
         info = info.push_next(&mut debug_info);
     }
 
-    // We can give a custom allocator to the instance, but
-    // we set it here to None.
+    // We can give a custom allocator to the instance, but we
+    // set it here to None.
     let instance = entry.create_instance(&info, None)?;
 
     if VALIDATION_ENABLED {
-        // Create the debug messenger in the instance with
-        // our debug info and link it to our app data
+        // Create the debug messenger in the instance with our
+        // debug info and link it to our app data
         data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
     }
 
     info!("Vulkan instance created.");
     Ok(instance)
-}
-
-unsafe fn create_sync_objects(
-    device: &Device,
-    data: &mut AppData,
-) -> Result<()> {
-    // Rendering operations, such as acquiring images,
-    // presenting images or running a command buffer are
-    // executed asynchronously. This means that the order of
-    // execution is undefined, which poses a problem because
-    // each operation depends on the completion of the previous
-    // one. To solve this, Vulkan provides two ways of
-    // synchronizing swapchain events: fences and semaphores. We
-    // have to take care of setting the SIGNALED flag when
-    // creating the fences, because they are in the unsignaled
-    // state by default, which will freeze the program when the
-    // render function waits for the fences to be signaled the
-    // first time.
-    let semaphore_info = vk::SemaphoreCreateInfo::builder();
-    let fence_info = vk::FenceCreateInfo::builder()
-        .flags(vk::FenceCreateFlags::SIGNALED);
-
-    for _ in 0..MAX_FRAMES_IN_FLIGHT {
-        // Semaphores are simply signal identifiers that
-        // indicate when a batch of commands has been processed.
-        // In our case, we will need one semaphore to signal
-        // that an image has been acquired and is ready for
-        // rendering, and one to signal that rendering has
-        // finished and presentation can happen.
-        data.image_available_semaphores
-            .push(device.create_semaphore(&semaphore_info, None)?);
-        data.render_finished_semaphores
-            .push(device.create_semaphore(&semaphore_info, None)?);
-
-        // Fences are similar to semaphores, but they have
-        // accessible state and can be waited for from the
-        // program code; thus, they can insert a dependency
-        // between a queue and the host, which means that they
-        // are used for CPU-GPU synchronization, while
-        // semaphores handle GPU-GPU synchronization. For
-        // example, if the CPU is submitting work faster than
-        // the GPU can process it, semaphores and command
-        // buffers will be used for multiple frames at the same
-        // time: creating a fence for each frame in the
-        // swapchain will allow us to wait for objects to finish
-        // executing while having multiple frames "in-flight"
-        // (worked on asynchronously).
-        data.rendering_fences.push(device.create_fence(&fence_info, None)?);
-    }
-
-    // In-flight fences avoid concurrent usage of command
-    // buffers and semaphores due to high CPU frequencies, but
-    // if images are returned by the swapchain out-of-order then
-    // it's possible that we may start rendering to a swapchain
-    // image that is already "in flight". To avoid this, we need
-    // to track for each image in the swapchain if a frame in
-    // flight is currently using it, by refering to the
-    // corresponding fence. Because no frame uses an image
-    // initially, we explicitly initialize each image fence to
-    // null.
-    data.images_in_flight = data.swapchain_images
-        .iter()
-        .map(|_| vk::Fence::null())
-        .collect();
-
-    info!("Sync objects configured.");
-    Ok(())
 }
 
 extern "system" fn debug_callback(
