@@ -1,5 +1,5 @@
 use crate::{
-    app::AppData,
+    renderer::RenderData,
     queues::*, 
 };
 
@@ -10,7 +10,7 @@ use log::info;
 pub unsafe fn create_command_pools(
     instance: &Instance,
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<()> {
     // Commands in Vulkan, like drawing operations and memory
     // transfers, are not executed directly, but recorded in a
@@ -45,7 +45,7 @@ pub unsafe fn create_command_pools(
 
 pub unsafe fn create_command_buffers(
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<()> {
     // Command buffers are allocated from a command pool, and
     // then recorded with commands. All GPU commands have to go

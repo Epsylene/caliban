@@ -12,7 +12,7 @@ pub unsafe fn create_image_view(
     mip_levels: u32,
 ) -> Result<vk::ImageView> {
     // Images in Vulkan are not accessed as such, but through
-    // what are called "image views", which add level of
+    // what are called "image views", which add a level of
     // indirection to the image specifying how it should be
     // accessed. The first element of the view to define is how
     // the image colors are mapped to the image view colors. We

@@ -1,4 +1,4 @@
-use crate::app::AppData;
+use crate::renderer::RenderData;
 
 use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
@@ -6,7 +6,7 @@ use log::info;
 
 pub unsafe fn create_sync_objects(
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<()> {
     // Rendering operations, such as acquiring images,
     // presenting images or running a command buffer are
@@ -57,7 +57,7 @@ pub unsafe fn create_sync_objects(
 
 pub unsafe fn destroy_sync_objects(
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) {
     for frame in &mut data.frames {
         device.destroy_semaphore(frame.image_available_semaphore, None);

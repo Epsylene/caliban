@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    app::{
-        AppData, 
+    renderer::{
+        RenderData, 
         PORTABILITY_MACOS_VERSION, 
         VALIDATION_ENABLED, 
         VALIDATION_LAYER
@@ -57,7 +57,7 @@ unsafe fn check_physical_device_extensions(
 
 unsafe fn check_physical_device(
     instance: &Instance,
-    data: &mut AppData,
+    data: &mut RenderData,
     physical_device: vk::PhysicalDevice,
 ) -> Result<()> {
     // Each device has a number of associated queue families
@@ -91,8 +91,8 @@ unsafe fn check_physical_device(
 
 pub unsafe fn pick_physical_device(
     instance: &Instance, 
-    data: &mut AppData
-) -> Result<()> {
+    data: &mut RenderData
+) -> Result<vk::PhysicalDevice> {
     // There can be more than one graphics device on the system
     // (one dedicated and one integrated graphics card at the
     // same time, for example), and in fact a Vulkan instance
@@ -105,13 +105,10 @@ pub unsafe fn pick_physical_device(
         if let Err(error) = check_physical_device(instance, data, device) {
             warn!("Skipping physical device ({}): {}", properties.device_name, error);
         } else {
-            // If there is a suitable device for graphics, we
-            // pick it and check the maximum number of samples
-            // it can handle (for antialiasing).
-            data.physical_device = device;
-            
+            // If there is a suitable device for graphics,
+            // return it and print its properties.
             info!("Selected physical device: {}", properties.device_name);
-            return Ok(());
+            return Ok(device);
         }
     }
 
@@ -121,7 +118,7 @@ pub unsafe fn pick_physical_device(
 pub unsafe fn create_logical_device(
     entry: &Entry, 
     instance: &Instance, 
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<Device> {
     // The logical device serves as a layer between a physical
     // device and the application. There might be more than one

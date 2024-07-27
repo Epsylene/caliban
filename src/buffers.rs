@@ -1,5 +1,5 @@
 use crate::{
-    app::AppData,
+    renderer::RenderData,
     devices::SuitabilityError, 
 };
 
@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 
 pub unsafe fn find_memory_type(
     instance: &Instance,
-    data: &AppData,
+    data: &RenderData,
     properties: vk::MemoryPropertyFlags,
     requirements: vk::MemoryRequirements,
 ) -> Result<u32> {

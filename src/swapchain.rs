@@ -1,5 +1,5 @@
 use crate::{
-    app::AppData,
+    renderer::RenderData,
     queues::*,
     image::*,
 };
@@ -22,7 +22,7 @@ pub struct SwapchainSupport {
 
 pub unsafe fn get_swapchain_support(
     instance: &Instance,
-    data: &AppData,
+    data: &RenderData,
     physical_device: vk::PhysicalDevice,
 ) -> Result<SwapchainSupport> {
     // There is no concept of a "default framebuffer" in Vulkan
@@ -149,7 +149,7 @@ pub unsafe fn create_swapchain(
 window: &Window,
 instance: &Instance,
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<()> {
     // To create the swapchain, we will first query the
     // graphics queue family index and support info for the
@@ -243,7 +243,7 @@ instance: &Instance,
 
 pub unsafe fn create_swapchain_image_views(
     device: &Device,
-    data: &mut AppData,
+    data: &mut RenderData,
 ) -> Result<()> {
     // The swapchain is a structure to hold and present images.
     // In Vulkan, however, images are not used as such, but
@@ -269,7 +269,7 @@ pub unsafe fn create_swapchain_image_views(
 
 pub unsafe fn destroy_swapchain(
     device: &Device,
-    data: &AppData,
+    data: &RenderData,
 ) {
     // Swapchain
     device.destroy_swapchain_khr(data.swapchain, None);
