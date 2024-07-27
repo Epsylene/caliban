@@ -34,8 +34,8 @@ impl ApplicationHandler for App {
                 // completed; to avoid this, we are waiting for
                 // the logical device to finish operations
                 // before destroying.
-                if let Some(ref device) = self.renderer {
-                    unsafe { device.device.device_wait_idle().unwrap(); }
+                if let Some(ref renderer) = self.renderer {
+                    renderer.wait_idle();
                     self.destroy();
                 }
 

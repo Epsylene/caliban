@@ -19,6 +19,8 @@ impl App {
         }
     }
 
+    /// Initialize the application with the passed window
+    /// handle and a new Vulkan renderer.
     pub fn init(&mut self, window: Window) -> Result<()> {
         let renderer = unsafe { Renderer::create(&window)? };
         self.renderer = Some(renderer);

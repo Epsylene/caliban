@@ -329,6 +329,11 @@ impl Renderer {
         Ok(())
     }
 
+    /// Wait for the logical device to finish operations.
+    pub fn wait_idle(&self) {
+        unsafe { self.device.device_wait_idle().unwrap() };
+    }
+
     pub unsafe fn destroy(&mut self) {
         destroy_swapchain(&self.device, &self.data);
 
