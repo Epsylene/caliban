@@ -59,7 +59,7 @@ pub struct Renderer {
     entry: Entry,
     instance: Instance,
     data: RenderData,
-    pub device: Device,    
+    pub device: Device,
     frame: usize,
 }
 

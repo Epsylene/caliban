@@ -9,6 +9,7 @@ mod frame;
 mod sync;
 mod window;
 mod app;
+mod allocator;
 
 use winit::event_loop::{EventLoop, ControlFlow};
 use app::App;
