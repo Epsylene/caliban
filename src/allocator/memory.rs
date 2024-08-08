@@ -4,6 +4,11 @@ use vulkanalia::{
     vk::DeviceMemory,
 };
 
+pub enum MemoryLocation {
+    Device,
+    Shared,
+}
+
 pub struct MemoryBlock {
     pub memory: DeviceMemory,
     pub size: u64,
@@ -54,20 +59,20 @@ impl MemoryBlock {
 }
 
 pub struct MemoryRegion {
-    blocks: Vec<MemoryBlock>,
-    properties: vk::MemoryPropertyFlags,
-    type_index: usize,
+    pub blocks: Vec<MemoryBlock>,
+    pub properties: vk::MemoryPropertyFlags,
+    pub memory_type: usize,
 }
 
 impl MemoryRegion {
     pub fn new(
         properties: vk::MemoryPropertyFlags,
-        type_index: usize,
+        memory_type: usize,
     ) -> Self {
         Self {
             blocks: Vec::default(),
             properties,
-            type_index,
+            memory_type,
         }
     }
 
