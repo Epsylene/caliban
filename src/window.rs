@@ -1,5 +1,4 @@
 use crate::app::App;
-use vulkanalia::prelude::v1_0::DeviceV1_0;
 use winit::{
     application::ApplicationHandler, 
     dpi::LogicalSize, 

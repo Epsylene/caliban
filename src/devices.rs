@@ -8,7 +8,7 @@ use crate::{
         VALIDATION_LAYER
     }, 
     queues::*, 
-    swapchain::{get_swapchain_support, SwapchainSupport}
+    swapchain::get_swapchain_support,
 };
 
 use thiserror::Error;

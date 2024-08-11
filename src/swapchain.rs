@@ -128,7 +128,7 @@ fn get_swapchain_extent(
     // In that case, we will still pick the resolution of the
     // window, clamped between the min and max values of the
     // swapchain capabilities.
-    if capabilities.current_extent.width != u32::max_value() {
+    if capabilities.current_extent.width != u32::MAX {
         capabilities.current_extent
     } else {
         let size = window.inner_size();

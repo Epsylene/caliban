@@ -3,7 +3,6 @@ mod devices;
 mod queues;
 mod swapchain;
 mod image;
-mod buffers;
 mod commands;
 mod frame;
 mod sync;
