@@ -1,4 +1,6 @@
-use super::memory::{MemoryLocation, MemoryBlock, MemoryRegion};
+mod memory;
+
+use memory::{MemoryLocation, MemoryBlock, MemoryRegion};
 use vulkanalia::prelude::v1_0::*;
 
 pub struct Allocation {
@@ -6,14 +8,14 @@ pub struct Allocation {
     offset: u64,
 }
 
-struct Allocator {
+pub struct Allocator {
     instance: Instance,
     device: Device,
     regions: Vec<MemoryRegion>,
 }
 
 impl Allocator {
-    fn new(instance: Instance, device: Device, physical_device: vk::PhysicalDevice) -> Self {
+    pub fn new(instance: Instance, device: Device, physical_device: vk::PhysicalDevice) -> Self {
         // Get the memory properties of the device.
         let device_properties = unsafe {
             instance.get_physical_device_memory_properties(physical_device)
