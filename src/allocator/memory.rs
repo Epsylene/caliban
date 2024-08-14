@@ -1,4 +1,4 @@
-use super::Allocation;
+use crate::allocator::Allocation;
 use std::ffi::c_void;
 use vulkanalia::{
     prelude::v1_0::*,

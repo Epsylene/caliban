@@ -1,4 +1,5 @@
 mod memory;
+mod suballocator;
 
 use memory::{MemoryLocation, MemoryBlock, MemoryRegion};
 use vulkanalia::prelude::v1_0::*;
