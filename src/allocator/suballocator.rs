@@ -1,25 +1,26 @@
 use std::collections::{HashMap, HashSet};
+use anyhow::{anyhow, Result};
 
-type ChunkId = u64;
+pub type ChunkId = u64;
 
 struct MemoryChunk {
     id: ChunkId,
-    size: usize,
-    offset: usize,
+    size: u64,
+    offset: u64,
     prev: Option<ChunkId>,
     next: Option<ChunkId>,
 }
 
-struct SubAllocator {
-    size: usize,
-    allocated: usize,
+pub struct SubAllocator {
+    size: u64,
+    allocated: u64,
     chunks: HashMap<ChunkId, MemoryChunk>,
     free_chunks: HashSet<ChunkId>,
     id_counter: ChunkId,
 }
 
 impl SubAllocator {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: u64) -> Self {
         let id = 1;
         let mut chunks = HashMap::new();
         chunks.insert(
@@ -46,9 +47,9 @@ impl SubAllocator {
 
     pub fn allocate(
         &mut self, 
-        size: usize, 
-        alignment: usize
-    ) -> (ChunkId, usize) {
+        size: u64, 
+        alignment: u64
+    ) -> Result<(ChunkId, u64)> {
         // Find a free chunk that fits the allocation
         // constraints (size and alignment).
         let available_chunk = self.free_chunks
@@ -77,9 +78,12 @@ impl SubAllocator {
                     .then_some((chunk.id, aligned_size, offset))
             });
 
-        // Get access to the available free chunk.
-        // todo: error handling
-        let (free_chunk_id, aligned_size, offset) = available_chunk.unwrap();
+        // Get access to the available free chunk. If there is
+        // none, return early.
+        let (free_chunk_id, aligned_size, offset) = match available_chunk {
+            Some(chunk) => chunk,
+            None => return Err(anyhow!("No free chunk available")),
+        };
         let free_chunk = self.chunks.get_mut(&free_chunk_id).unwrap();
 
         // If the chunk is larger than the aligned size, split
@@ -123,11 +127,11 @@ impl SubAllocator {
         // 'aligned_size'. We return the id of the allocated
         // chunk and its offset.
         self.allocated += aligned_size;
-        (id, offset)
+        Ok((id, offset))
     }
 }
 
-fn align_up(value: usize, alignment: usize) -> usize {
+fn align_up(value: u64, alignment: u64) -> u64 {
     // Align the value up to the alignment: the 
     (value + alignment - 1) & !(alignment - 1)
 }

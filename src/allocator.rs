@@ -1,12 +1,16 @@
 mod memory;
 mod suballocator;
 
-use memory::{MemoryLocation, MemoryBlock, MemoryRegion};
+use memory::{MemoryLocation, MemoryRegion};
+
+use vk::DeviceMemory;
 use vulkanalia::prelude::v1_0::*;
+use std::ffi::c_void;
 
 pub struct Allocation {
-    memory: MemoryBlock,
+    memory: DeviceMemory,
     offset: u64,
+    mapped_ptr: *mut c_void,
 }
 
 pub struct Allocator {
@@ -59,7 +63,11 @@ impl Allocator {
 
         // Then, allocate a memory block from the region and
         // return the allocation.
-        region.allocate(&self.device, requirements.size as usize)
+        region.allocate(
+            &self.device, 
+            requirements.size,
+            requirements.alignment,
+        )
     }
 
     fn find_memory_type(&self, requirements: vk::MemoryRequirements, properties: vk::MemoryPropertyFlags) -> usize {

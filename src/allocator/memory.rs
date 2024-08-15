@@ -1,4 +1,5 @@
-use crate::allocator::Allocation;
+use super::{suballocator::SubAllocator, Allocation};
+
 use std::ffi::c_void;
 use vulkanalia::{
     prelude::v1_0::*,
@@ -10,10 +11,16 @@ pub enum MemoryLocation {
     Shared,
 }
 
+// Each memory block represents a real piece of allocated
+// memory on the device (or a shared memory), with a given
+// size, and mapped to a pointer on the host. Each block has a
+// sub-allocator that manages the sub-allocations within the
+// block.
 pub struct MemoryBlock {
     pub memory: DeviceMemory,
     pub size: u64,
-    pub mapped_ptr: *mut c_void,
+    mapped_ptr: *mut c_void,
+    suballocator: SubAllocator,
 }
 
 impl MemoryBlock {
@@ -42,10 +49,15 @@ impl MemoryBlock {
             ).expect("Failed to map memory.")
         };
         
+        // Create a sub-allocator for a memory chunk covering
+        // the whole block.
+        let suballocator = SubAllocator::new(size);
+
         Self {
             memory,
             size,
             mapped_ptr,
+            suballocator,
         }
     }
 
@@ -60,7 +72,7 @@ impl MemoryBlock {
 }
 
 pub struct MemoryRegion {
-    pub blocks: Vec<Option<MemoryBlock>>,
+    pub blocks: Vec<MemoryBlock>,
     pub properties: vk::MemoryPropertyFlags,
     pub memory_type: usize,
 }
@@ -77,67 +89,67 @@ impl MemoryRegion {
         }
     }
 
-    pub fn allocate(&mut self, device: &Device, size: usize) -> Allocation {
-        // Get the index of the first empty (fully
-        // non-allocated) block.
-        let index = self.blocks
-            .iter()
-            .enumerate()
-            .find_map(|(index, block)| {
-                if block.is_none() {
-                    // If there is no block, we can allocate,
-                    // so return the index.
-                    Some(index)
-                } else {
-                    // If there is a block, try to allocate
-                    // with the sub-allocator.
-                    todo!();
-
-                    // If the sub-allocation succeeds, get the
-                    // offset from the block's mapped pointer
-                    // and return the allocation.
-                    todo!();
-
-                    None
+    pub fn allocate(
+        &mut self, 
+        device: &Device, 
+        size: u64,
+        alignment: u64,
+    ) -> Allocation {
+        // Iterate over the blocks to try to get an allocation.
+        let allocation = self.blocks
+            .iter_mut()
+            .find_map(|block| {
+                // For each block, try to sub-allocate.
+                match block.suballocator.allocate(size, alignment) {
+                    Ok((_, offset)) => {
+                        // The mapped pointer is the pointer of the
+                        // block plus the offset.
+                        let mapped_ptr = unsafe { block.mapped_ptr.add(offset as usize) };
+                        
+                        Some(Allocation {
+                            memory: block.memory,
+                            offset,
+                            mapped_ptr,
+                        })
+                    }
+                    Err(_) => None,
                 }
             });
 
-        // If there was a fully empty block or no
-        // sub-allocation suceeded, allocate a block of memory
-        // from the device.
-        let block = MemoryBlock::new(
-            device, 
-            size as u64, 
-            self.memory_type
-        );
-        
-        // Match the index depending on the previous case:
-        let index = match index {
-            // - If there was an empty block, place the new
-            //   block at that index.
-            Some(index) => {
-                self.blocks[index] = Some(block);
-                index
-            },
-            // - If all blocks were full, push the new block to
-            //   the end of the list.
+        match allocation {
+            Some(allocation) => allocation,
             None => {
-                self.blocks.push(Some(block));
-                self.blocks.len() - 1
-            }
-        };
+                // If no allocation was possible (id est, all
+                // blocks are full), we add a new block at the
+                // end of the list and sub-allocate from it.
+                let mut block = MemoryBlock::new(
+                    device, 
+                    size, 
+                    self.memory_type
+                );
 
-        // Sub-allocate the memory from the block and get the
-        // mapped pointer with the offset.
-        todo!();
+                match block.suballocator.allocate(size, alignment) {
+                    Ok((_, offset)) => {
+                        let mapped_ptr = unsafe { block.mapped_ptr.add(offset as usize) };
+                        let memory = block.memory;
+                        
+                        self.blocks.push(block);
 
-        // Return the allocation.
-        todo!();
+                        Allocation {
+                            memory,
+                            offset,
+                            mapped_ptr,
+                        }
+                    }
+                    Err(_) => panic!("Failed to allocate memory."),
+                }
+            },
+        }
     }
 
     fn free(&self, device: &Device) {
         // Free all allocated blocks 
-        for block in self.blocks.iter().flatten() {
+        for block in self.blocks.iter() {
             block.destroy(device);
         }
     }
