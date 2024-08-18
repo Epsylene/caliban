@@ -13,10 +13,10 @@ struct MemoryChunk {
 
 pub struct SubAllocator {
     size: u64,
-    allocated: u64,
     chunks: HashMap<ChunkId, MemoryChunk>,
     free_chunks: HashSet<ChunkId>,
     id_counter: ChunkId,
+    pub allocated: u64,
 }
 
 impl SubAllocator {
@@ -89,7 +89,7 @@ impl SubAllocator {
         // If the chunk is larger than the aligned size, split
         // the chunk in two parts: one for the allocation and
         // one for the remaining space.
-        let (id, offset) = if free_chunk.size > aligned_size {
+        let id = if free_chunk.size > aligned_size {
             let new_id = self.id_counter;
             self.id_counter += 1;
 
@@ -111,7 +111,17 @@ impl SubAllocator {
             free_chunk.offset += aligned_size;
             free_chunk.size -= aligned_size;
 
-            (new_chunk.id, offset)
+            // If there was a previous chunk, update its 'next'
+            // field too. 
+            if let Some(prev_id) = new_chunk.prev {
+                let prev_chunk = self.chunks.get_mut(&prev_id).unwrap();
+                prev_chunk.next = Some(new_id);
+            }
+
+            // Finally, insert the new chunk in the list and
+            // return the id.
+            self.chunks.insert(new_id, new_chunk);
+            new_id
         } else {
             // If the chunk size is exactly the aligned size
             // (it cannot be less because of the previous
@@ -120,7 +130,7 @@ impl SubAllocator {
             let chunk_id = free_chunk.id;
             self.free_chunks.remove(&chunk_id);
 
-            (chunk_id, offset)
+            chunk_id
         };
 
         // In both cases, the allocated space has increased by
@@ -128,6 +138,15 @@ impl SubAllocator {
         // chunk and its offset.
         self.allocated += aligned_size;
         Ok((id, offset))
+    }
+
+    pub fn free(&mut self, chunk_id: ChunkId) {
+        let chunk = self.chunks.get_mut(&chunk_id).unwrap();
+
+        chunk.prev = None;
+        chunk.next = None;
+        self.allocated -= chunk.size;
+        self.free_chunks.insert(chunk_id);
     }
 }
 

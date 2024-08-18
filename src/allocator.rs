@@ -2,6 +2,7 @@ mod memory;
 mod suballocator;
 
 use memory::{MemoryLocation, MemoryRegion};
+use suballocator::ChunkId;
 
 use vk::DeviceMemory;
 use vulkanalia::prelude::v1_0::*;
@@ -10,6 +11,9 @@ use std::ffi::c_void;
 pub struct Allocation {
     memory: DeviceMemory,
     offset: u64,
+    chunk_id: ChunkId,
+    block_index: usize,
+    memory_type: usize,
     mapped_ptr: *mut c_void,
 }
 
@@ -68,6 +72,14 @@ impl Allocator {
             requirements.size,
             requirements.alignment,
         )
+    }
+
+    fn free(&mut self, allocation: Allocation, device: &Device) {
+        // Get the region corresponding to the memory type of
+        // the allocation, and free the chunk in the block
+        // corresponding to the allocation.
+        let region = &mut self.regions[allocation.memory_type];
+        region.free(allocation.block_index, allocation.offset, device);
     }
 
     fn find_memory_type(&self, requirements: vk::MemoryRequirements, properties: vk::MemoryPropertyFlags) -> usize {

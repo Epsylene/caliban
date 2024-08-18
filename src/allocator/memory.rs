@@ -1,4 +1,4 @@
-use super::{suballocator::SubAllocator, Allocation};
+use super::{suballocator::{ChunkId, SubAllocator}, Allocation};
 
 use std::ffi::c_void;
 use vulkanalia::{
@@ -61,6 +61,10 @@ impl MemoryBlock {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        self.suballocator.allocated == 0
+    }
+
     fn destroy(&self, device: &Device) {
         unsafe {
             if !self.mapped_ptr.is_null() {
@@ -98,17 +102,21 @@ impl MemoryRegion {
         // Iterate over the blocks to try to get an allocation.
         let allocation = self.blocks
             .iter_mut()
-            .find_map(|block| {
+            .enumerate()
+            .find_map(|(idx, block)| {
                 // For each block, try to sub-allocate.
                 match block.suballocator.allocate(size, alignment) {
-                    Ok((_, offset)) => {
-                        // The mapped pointer is the pointer of the
-                        // block plus the offset.
+                    Ok((chunk_id, offset)) => {
+                        // The mapped pointer is the pointer of
+                        // the block plus the offset.
                         let mapped_ptr = unsafe { block.mapped_ptr.add(offset as usize) };
                         
                         Some(Allocation {
                             memory: block.memory,
                             offset,
+                            chunk_id,
+                            block_index: idx,
+                            memory_type: self.memory_type,
                             mapped_ptr,
                         })
                     }
@@ -117,6 +125,7 @@ impl MemoryRegion {
             });
 
         match allocation {
+            // Sub-allocating succeeded, return the allocation.
             Some(allocation) => allocation,
             None => {
                 // If no allocation was possible (id est, all
@@ -129,15 +138,20 @@ impl MemoryRegion {
                 );
 
                 match block.suballocator.allocate(size, alignment) {
-                    Ok((_, offset)) => {
+                    Ok((chunk_id, offset)) => {
                         let mapped_ptr = unsafe { block.mapped_ptr.add(offset as usize) };
                         let memory = block.memory;
+                        let memory_type = self.memory_type;
                         
                         self.blocks.push(block);
+                        let block_index = self.blocks.len() - 1;
 
                         Allocation {
                             memory,
                             offset,
+                            chunk_id,
+                            memory_type,
+                            block_index,
                             mapped_ptr,
                         }
                     }
@@ -147,10 +161,16 @@ impl MemoryRegion {
         }
     }
 
-    fn free(&self, device: &Device) {
-        // Free all allocated blocks 
-        for block in self.blocks.iter() {
+    pub fn free(&mut self, block_index: usize, chunk_id: ChunkId, device: &Device) {
+        // Get the block where the chunk is allocated and free
+        // it.
+        let block = &mut self.blocks[block_index];
+        block.suballocator.free(chunk_id);
+        
+        // If the block is now empty, destroy it. 
+        if block.is_empty() {
             block.destroy(device);
+            self.blocks.remove(block_index);
         }
     }
 }
