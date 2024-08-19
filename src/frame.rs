@@ -27,12 +27,3 @@ pub struct FrameData {
     /// complete.
     pub in_flight_fence: vk::Fence,
 }
-
-impl FrameData {
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.destroy_command_pool(self.command_pool, None);
-        device.destroy_semaphore(self.image_available_semaphore, None);
-        device.destroy_semaphore(self.render_finished_semaphore, None);
-        device.destroy_fence(self.in_flight_fence, None);
-    }
-}

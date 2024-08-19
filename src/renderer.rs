@@ -366,7 +366,7 @@ impl Renderer {
     }
 }
 
-unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut RenderData) -> Result<Instance> {
+fn create_instance(window: &Window, entry: &Entry, data: &mut RenderData) -> Result<Instance> {
     // Validation layers: because the Vulkan API is designed
     // around the idea of minimal driver overhead, there is
     // very little default error checking. Instead, Vulkan
@@ -377,11 +377,13 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut RenderData)
     // the system, for example as part of the LunarG Vulkan
     // SDK. We first need to get the list of available
     // layers...
-    let available_layers = entry
-        .enumerate_instance_layer_properties()?
-        .iter()
-        .map(|l| l.layer_name)
-        .collect::<HashSet<_>>();
+    let available_layers = unsafe {
+        entry
+            .enumerate_instance_layer_properties()?
+            .iter()
+            .map(|l| l.layer_name)
+            .collect::<HashSet<_>>()
+    };
 
     // ...then check if validation layers are available...
     if VALIDATION_ENABLED && !available_layers.contains(&VALIDATION_LAYER) {
@@ -468,12 +470,12 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut RenderData)
 
     // We can give a custom allocator to the instance, but we
     // set it here to None.
-    let instance = entry.create_instance(&info, None)?;
+    let instance = unsafe { entry.create_instance(&info, None)? };
 
     if VALIDATION_ENABLED {
         // Create the debug messenger in the instance with our
         // debug info and link it to our app data
-        data.debug_messenger = instance.create_debug_utils_messenger_ext(&debug_info, None)?;
+        data.debug_messenger = unsafe { instance.create_debug_utils_messenger_ext(&debug_info, None)? };
     }
 
     info!("Vulkan instance created.");

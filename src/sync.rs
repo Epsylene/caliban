@@ -4,7 +4,7 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
 use log::info;
 
-pub unsafe fn create_sync_objects(
+pub fn create_sync_objects(
     device: &Device,
     data: &mut RenderData,
 ) -> Result<()> {
@@ -36,8 +36,8 @@ pub unsafe fn create_sync_objects(
         // that an image has been acquired and is ready for
         // rendering, and one to signal that rendering has
         // finished and presentation can happen.
-        frame.image_available_semaphore = device.create_semaphore(&semaphore_info, None)?;
-        frame.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
+        frame.image_available_semaphore = unsafe { device.create_semaphore(&semaphore_info, None) }?;
+        frame.render_finished_semaphore = unsafe { device.create_semaphore(&semaphore_info, None) }?;
         
         // Furthermore, we need to create a fence for each
         // frame to sync the CPU with the GPU: if the CPU is
@@ -48,27 +48,29 @@ pub unsafe fn create_sync_objects(
         // for objects to finish executing while having
         // multiple frames "in-flight" (worked on
         // asynchronously).
-        frame.in_flight_fence = device.create_fence(&fence_info, None)?;
+        frame.in_flight_fence = unsafe { device.create_fence(&fence_info, None) }?;
     }
    
     info!("Sync objects created.");
     Ok(())
 }
 
-pub unsafe fn destroy_sync_objects(
+pub fn destroy_sync_objects(
     device: &Device,
     data: &mut RenderData,
 ) {
     for frame in &mut data.frames {
-        device.destroy_semaphore(frame.image_available_semaphore, None);
-        device.destroy_semaphore(frame.render_finished_semaphore, None);
-        device.destroy_fence(frame.in_flight_fence, None);
+        unsafe {
+            device.destroy_semaphore(frame.image_available_semaphore, None);
+            device.destroy_semaphore(frame.render_finished_semaphore, None);
+            device.destroy_fence(frame.in_flight_fence, None);
+        }
     }
 
     info!("Sync objects destroyed.");
 }
 
-pub unsafe fn semaphore_submit(
+pub fn semaphore_submit(
     stage_mask: vk::PipelineStageFlags2,
     semaphore: vk::Semaphore,
 ) -> vk::SemaphoreSubmitInfo {

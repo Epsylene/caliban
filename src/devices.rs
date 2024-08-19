@@ -36,16 +36,18 @@ pub const REQUIRED_EXTENSIONS: &[vk::ExtensionName] = &[
 #[error("{0}")]
 pub struct SuitabilityError(pub &'static str);
 
-unsafe fn check_physical_device_extensions(
+fn check_physical_device_extensions(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
 ) -> Result<()> {
     // Get the list of supported device extensions on the device
-    let extensions = instance
-        .enumerate_device_extension_properties(physical_device, None)?
-        .iter()
-        .map(|e| e.extension_name)
-        .collect::<HashSet<_>>();
+    let extensions = unsafe {
+        instance
+            .enumerate_device_extension_properties(physical_device, None)?
+            .iter()
+            .map(|e| e.extension_name)
+            .collect::<HashSet<_>>()
+    };
 
     // Check if all required extensions are supported
     if REQUIRED_EXTENSIONS.iter().all(|e| extensions.contains(e)) {
@@ -55,7 +57,7 @@ unsafe fn check_physical_device_extensions(
     }
 }
 
-unsafe fn check_physical_device(
+fn check_physical_device(
     instance: &Instance,
     data: &mut RenderData,
     physical_device: vk::PhysicalDevice,
@@ -72,7 +74,7 @@ unsafe fn check_physical_device(
 
     // Likewise, we can check if the device supports the
     // included optional features.
-    let features = instance.get_physical_device_features(physical_device);
+    let features = unsafe { instance.get_physical_device_features(physical_device) };
     if features.sampler_anisotropy != vk::TRUE {
         return Err(anyhow!(SuitabilityError("Device does not support anisotropic filtering.")));
     }
@@ -89,7 +91,7 @@ unsafe fn check_physical_device(
     Ok(())
 }
 
-pub unsafe fn pick_physical_device(
+pub fn pick_physical_device(
     instance: &Instance, 
     data: &mut RenderData
 ) -> Result<vk::PhysicalDevice> {
@@ -99,8 +101,8 @@ pub unsafe fn pick_physical_device(
     // can set up and use any number of them simultaneously,
     // but we will stick here to listing the available physical
     // devices and picking the first graphics-capable one.
-    for device in instance.enumerate_physical_devices()? {
-        let properties = instance.get_physical_device_properties(device);
+    for device in unsafe { instance.enumerate_physical_devices()? } {
+        let properties = unsafe { instance.get_physical_device_properties(device) };
 
         if let Err(error) = check_physical_device(instance, data, device) {
             warn!("Skipping physical device ({}): {}", properties.device_name, error);
@@ -115,7 +117,7 @@ pub unsafe fn pick_physical_device(
     Err(anyhow!(SuitabilityError("Failed to find suitable physical device.")))
 }
 
-pub unsafe fn create_logical_device(
+pub fn create_logical_device(
     entry: &Entry, 
     instance: &Instance, 
     data: &mut RenderData,
@@ -204,8 +206,8 @@ pub unsafe fn create_logical_device(
 
     // Finally, we can create the device, and set our app
     // handle for the graphics queue.
-    let device = instance.create_device(data.physical_device, &info, None)?;
-    data.graphics_queue = device.get_device_queue(data.graphics_queue_family, 0);
+    let device = unsafe { instance.create_device(data.physical_device, &info, None)? };
+    data.graphics_queue = unsafe { device.get_device_queue(data.graphics_queue_family, 0) };
 
     info!("Logical device created.");
     Ok(device)

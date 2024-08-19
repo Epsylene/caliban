@@ -4,7 +4,7 @@ use vulkanalia::{
 };
 use anyhow::Result;
 
-pub unsafe fn create_image_view(
+pub fn create_image_view(
     device: &Device,
     image: vk::Image,
     format: vk::Format,
@@ -57,10 +57,10 @@ pub unsafe fn create_image_view(
         .components(component_mapping)
         .subresource_range(subresource_range);
 
-    Ok(device.create_image_view(&info, None)?)
+    Ok(unsafe { device.create_image_view(&info, None)? })
 }
 
-pub unsafe fn transition_image_layout(
+pub fn transition_image_layout(
     device: &Device,
     command_buffer: vk::CommandBuffer,
     image: vk::Image,
@@ -123,7 +123,7 @@ pub unsafe fn transition_image_layout(
     let dependency = vk::DependencyInfoKHR::builder()
         .image_memory_barriers(barriers);
 
-    device.cmd_pipeline_barrier2(command_buffer, &dependency);
+    unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency) };
     
     Ok(())
 }

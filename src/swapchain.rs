@@ -20,7 +20,7 @@ pub struct SwapchainSupport {
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
 
-pub unsafe fn get_swapchain_support(
+pub fn get_swapchain_support(
     instance: &Instance,
     data: &RenderData,
     physical_device: vk::PhysicalDevice,
@@ -37,21 +37,24 @@ pub unsafe fn get_swapchain_support(
     // compatibility with our window surface have to be queried
     // beforehand.
     Ok(SwapchainSupport {
-        capabilities: instance
-            .get_physical_device_surface_capabilities_khr(
+        capabilities: unsafe { 
+            instance.get_physical_device_surface_capabilities_khr(
                 physical_device,
                 data.surface,
-            )?,
-        formats: instance
-            .get_physical_device_surface_formats_khr(
+            )?
+        },
+        formats: unsafe {
+            instance.get_physical_device_surface_formats_khr(
                 physical_device,
                 data.surface,
-            )?,
-        present_modes: instance
-            .get_physical_device_surface_present_modes_khr(
+            )?
+        },
+        present_modes: unsafe {
+            instance.get_physical_device_surface_present_modes_khr(
                 physical_device,
                 data.surface,
-            )?,
+            )?
+        },
     })
 }
 
@@ -145,7 +148,7 @@ fn get_swapchain_extent(
     }
 }
 
-pub unsafe fn create_swapchain(
+pub fn create_swapchain(
 window: &Window,
 instance: &Instance,
     device: &Device,
@@ -232,8 +235,8 @@ instance: &Instance,
         .old_swapchain(vk::SwapchainKHR::null());
 
     // And actually create the swapchain.
-    data.swapchain = device.create_swapchain_khr(&info, None)?;
-    data.swapchain_images = device.get_swapchain_images_khr(data.swapchain)?;
+    data.swapchain = unsafe { device.create_swapchain_khr(&info, None)? };
+    data.swapchain_images = unsafe { device.get_swapchain_images_khr(data.swapchain)? };
     data.swapchain_format = surface_format.format;
     data.swapchain_extent = extent;
 
@@ -241,7 +244,7 @@ instance: &Instance,
     Ok(())
 }
 
-pub unsafe fn create_swapchain_image_views(
+pub fn create_swapchain_image_views(
     device: &Device,
     data: &mut RenderData,
 ) -> Result<()> {
@@ -267,17 +270,17 @@ pub unsafe fn create_swapchain_image_views(
     Ok(())
 }
 
-pub unsafe fn destroy_swapchain(
+pub fn destroy_swapchain(
     device: &Device,
     data: &RenderData,
 ) {
     // Swapchain
-    device.destroy_swapchain_khr(data.swapchain, None);
+    unsafe { device.destroy_swapchain_khr(data.swapchain, None) };
 
     // Image views
     data.swapchain_image_views
         .iter()
-        .for_each(|&v| device.destroy_image_view(v, None));
+        .for_each(|&v| unsafe { device.destroy_image_view(v, None) });
 
     info!("Destroyed the swapchain and related objects.");
 }

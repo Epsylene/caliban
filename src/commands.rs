@@ -7,7 +7,7 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::Result;
 use log::info;
 
-pub unsafe fn create_command_pools(
+pub fn create_command_pools(
     instance: &Instance,
     device: &Device,
     data: &mut RenderData,
@@ -36,7 +36,7 @@ pub unsafe fn create_command_pools(
         .queue_family_index(index);
 
     for frame in &mut data.frames {
-        let command_pool = device.create_command_pool(&info, None)?;
+        let command_pool = unsafe { device.create_command_pool(&info, None) }?;
         frame.command_pool = command_pool;
     }
     

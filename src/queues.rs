@@ -4,7 +4,7 @@ use crate::devices::SuitabilityError;
 use vulkanalia::prelude::v1_0::*;
 use anyhow::{anyhow, Result};
 
-pub unsafe fn get_graphics_family_index(
+pub fn get_graphics_family_index(
     instance: &Instance,
     physical_device: vk::PhysicalDevice,
 ) -> Result<u32> {
@@ -15,8 +15,9 @@ pub unsafe fn get_graphics_family_index(
     // commands. The get_physical_device_queue... function
     // contains details about the queue families supported by
     // the device.
-    let queues = instance
-        .get_physical_device_queue_family_properties(physical_device);
+    let queues = unsafe { 
+        instance.get_physical_device_queue_family_properties(physical_device)
+    };
 
     // We can then find the first family that supports graphics
     // operations and retrieve its index.
