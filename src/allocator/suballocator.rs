@@ -178,11 +178,30 @@ impl SubAllocator {
 
     pub fn free(&mut self, chunk_id: ChunkId) {
         let chunk = self.chunks.get_mut(&chunk_id).unwrap();
-
-        chunk.prev = None;
-        chunk.next = None;
+        
+        // Free the chunk.
+        chunk.resource_type = ResourceType::Free;
         self.allocated -= chunk.size;
         self.free_chunks.insert(chunk_id);
+        
+        // Get the previous and next chunks.
+        let (prev, next) = (chunk.prev, chunk.next);
+        
+        // If there is a next chunk that is free, merge it into
+        // the current freed chunk.
+        if let Some(next_id) = next {
+            if self.chunks[&next_id].resource_type == ResourceType::Free {
+                self.merge_chunks(chunk_id, next_id);
+            }
+        }
+
+        // Likewise, if the previous chunk is free, merge the
+        // two together.
+        if let Some(prev_id) = prev {
+            if self.chunks[&prev_id].resource_type == ResourceType::Free {
+                self.merge_chunks(prev_id, chunk_id);
+            }
+        }
     }
 
     fn merge_chunks(&mut self, chunk_l: ChunkId, chunk_r: ChunkId) {
