@@ -1,14 +1,34 @@
 use super::{suballocator::{ChunkId, SubAllocator}, Allocation};
 
 use std::ffi::c_void;
+use anyhow::Result;
 use vulkanalia::{
     prelude::v1_0::*,
     vk::DeviceMemory,
 };
 
+/// The memory location of a resource.
+/// 
+/// - `Device`: the resource is located on the device.
+/// - `Shared`: the resource is visible by the host.
 pub enum MemoryLocation {
     Device,
     Shared,
+}
+
+/// The type of resource.
+/// 
+/// - `Free`: the resource is not bound to any memory.
+/// - `Linear`: the resource is bound to a linear memory block
+///   (a buffer, for example).
+/// - `NonLinear`: the resource is bound to a non-linear memory
+///   block (an image with `VK_IMAGE_TILING_OPTIMAL`, for
+///   example).
+#[derive(Clone, Copy, PartialEq)]
+pub enum ResourceType {
+    Free,
+    Linear,
+    NonLinear,
 }
 
 // Each memory block represents a real piece of allocated
@@ -33,13 +53,13 @@ impl MemoryBlock {
             .allocation_size(size)
             .memory_type_index(memory_type as u32);
 
-        // Allocate memory on the device
+        // Allocate memory on the device.
         let memory = unsafe {
             device.allocate_memory(&memory_info, None)
                 .expect("Failed to allocate memory.")
         };
 
-        // Map the memory to a pointer on the host
+        // Map the memory to a pointer on the host.
         let mapped_ptr = unsafe {
             device.map_memory(
                 memory, 
@@ -49,8 +69,8 @@ impl MemoryBlock {
             ).expect("Failed to map memory.")
         };
         
-        // Create a sub-allocator for a memory chunk covering
-        // the whole block.
+        // Create a sub-allocator for a set of memory chunks
+        // covering the whole block.
         let suballocator = SubAllocator::new(size);
 
         Self {
@@ -59,6 +79,16 @@ impl MemoryBlock {
             mapped_ptr,
             suballocator,
         }
+    }
+
+    fn allocate(
+        &mut self,
+        size: u64,
+        alignment: u64,
+        granularity: u64,
+        resource_type: ResourceType,
+    ) -> Result<(ChunkId, u64)> {
+        self.suballocator.allocate(size, alignment, granularity, resource_type)
     }
 
     fn is_empty(&self) -> bool {
@@ -98,6 +128,8 @@ impl MemoryRegion {
         device: &Device, 
         size: u64,
         alignment: u64,
+        granularity: u64,
+        resource_type: ResourceType,
     ) -> Allocation {
         // Iterate over the blocks to try to get an allocation.
         let allocation = self.blocks
@@ -105,7 +137,7 @@ impl MemoryRegion {
             .enumerate()
             .find_map(|(idx, block)| {
                 // For each block, try to sub-allocate.
-                match block.suballocator.allocate(size, alignment) {
+                match block.allocate(size, alignment, granularity, resource_type) {
                     Ok((chunk_id, offset)) => {
                         // The mapped pointer is the pointer of
                         // the block plus the offset.
@@ -137,7 +169,8 @@ impl MemoryRegion {
                     self.memory_type
                 );
 
-                match block.suballocator.allocate(size, alignment) {
+                match block.allocate(size, alignment, granularity, resource_type) {
+                    // If the allocation succeeded, return it.
                     Ok((chunk_id, offset)) => {
                         let mapped_ptr = unsafe { block.mapped_ptr.add(offset as usize) };
                         let memory = block.memory;
@@ -155,13 +188,20 @@ impl MemoryRegion {
                             mapped_ptr,
                         }
                     }
+                    // Else, panic (we should always be able to
+                    // allocate from a new block).
                     Err(_) => panic!("Failed to allocate memory."),
                 }
             },
         }
     }
 
-    pub fn free(&mut self, block_index: usize, chunk_id: ChunkId, device: &Device) {
+    pub fn free(
+        &mut self, 
+        device: &Device,
+        block_index: usize,
+        chunk_id: ChunkId
+    ) {
         // Get the block where the chunk is allocated and free
         // it.
         let block = &mut self.blocks[block_index];

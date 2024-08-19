@@ -1,3 +1,5 @@
+use super::memory::ResourceType;
+
 use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, Result};
 
@@ -7,6 +9,7 @@ struct MemoryChunk {
     id: ChunkId,
     size: u64,
     offset: u64,
+    resource_type: ResourceType,
     prev: Option<ChunkId>,
     next: Option<ChunkId>,
 }
@@ -23,11 +26,15 @@ impl SubAllocator {
     pub fn new(size: u64) -> Self {
         let id = 1;
         let mut chunks = HashMap::new();
+
+        // Initialize with a single free chunk that covers the
+        // whole memory block.
         chunks.insert(
             id, MemoryChunk {
                 id,
                 size,
                 offset: 0,
+                resource_type: ResourceType::Free,
                 prev: None,
                 next: None,
             }
@@ -48,7 +55,9 @@ impl SubAllocator {
     pub fn allocate(
         &mut self, 
         size: u64, 
-        alignment: u64
+        alignment: u64,
+        granularity: u64,
+        resource_type: ResourceType,
     ) -> Result<(ChunkId, u64)> {
         // Find a free chunk that fits the allocation
         // constraints (size and alignment).
@@ -62,15 +71,41 @@ impl SubAllocator {
             })
             .find_map(|chunk| {
                 // Get the correctly aligned offset for the
-                // allocation
-                let offset = align_up(chunk.offset, alignment);
-                todo!("granularity");
+                // allocation.
+                let mut offset = align_up(chunk.offset, alignment);
+                
+                // If there is a previous chunk...
+                if let Some(prev_id) = chunk.prev {
+                    let prev = self.chunks.get(&prev_id).unwrap();
+
+                    // ...check if it is on the same page as
+                    // the current one and if the resource to
+                    // be allocated conflicts with the previous
+                    // one.
+                    if is_on_same_page(prev.offset, prev.size, offset, size)
+                        && granularity_conflict(prev.resource_type, resource_type) {
+                        // In that case, align the offset to
+                        // the granularity.
+                        offset = align_up(offset, granularity);
+                    }
+                }
 
                 // The aligned size is the size of the
                 // allocation plus the padding due to the
                 // alignment constraints
                 let padding = offset - chunk.offset;
                 let aligned_size = size + padding;
+
+                if let Some(next) = chunk.next {
+                    let next_chunk = self.chunks.get(&next).unwrap();
+
+                    // If the next chunk also conflicts,
+                    // return: we cannot allocate here.
+                    if is_on_same_page(offset, size, next_chunk.offset, next_chunk.size)
+                        && granularity_conflict(resource_type, next_chunk.resource_type) {
+                        return None;
+                    }
+                }
 
                 // Return on the first chunk that fits the
                 // aligned size
@@ -100,6 +135,7 @@ impl SubAllocator {
                 id: new_id,
                 size: aligned_size,
                 offset: free_chunk.offset,
+                resource_type,
                 prev: free_chunk.prev,
                 next: Some(free_chunk.id),
             };
@@ -148,9 +184,91 @@ impl SubAllocator {
         self.allocated -= chunk.size;
         self.free_chunks.insert(chunk_id);
     }
+
+    fn merge_chunks(&mut self, chunk_l: ChunkId, chunk_r: ChunkId) {
+        // Get the right chunk and remove it from the list,
+        // since it will be merged.
+        let chunk_right = self.chunks.remove(&chunk_r).unwrap();
+        self.free_chunks.remove(&chunk_right.id);
+        
+        // Get the left chunk and update its size and `next`
+        // pointer.
+        let chunk_left = self.chunks.get_mut(&chunk_l).unwrap();
+        chunk_left.size += chunk_right.size;
+        chunk_left.next = chunk_right.next;
+
+        // Get the 'next' chunk of the (merged) right chunk and
+        // update its `prev` pointer.
+        if let Some(next_id) = chunk_right.next {
+            let next_chunk = self.chunks.get_mut(&next_id).unwrap();
+            next_chunk.prev = Some(chunk_l);
+        }
+    }
+}
+
+fn align_down(value: u64, alignment: u64) -> u64 {
+    // Align a value down to another value (the alignment): let
+    // us take an example with a value V = 0x3F and an alignment
+    // of A = 0x20. We have:
+    //  A = 0010 0000
+    //  A - 1 = 0001 1111 (set all bits lower than A)
+    //  M = !(A-1) = 1110 0000 (invert to get a mask)
+    //  
+    //    V = 0011 1111
+    //  & M = 1110 0000
+    //  ---------------
+    //        0010 0000
+    //
+    // All bits of V higher than A have been set to 0, so in
+    // the end align_down(V) = 0x20 = A. If we had V = 0x1F =
+    // 0001 1111, we would have end up with align_down(V) =
+    // 0x0, which is the next lower value that is a multiple of
+    // the page size A.
+    value & !(alignment - 1)
 }
 
 fn align_up(value: u64, alignment: u64) -> u64 {
-    // Align the value up to the alignment: the 
-    (value + alignment - 1) & !(alignment - 1)
+    // Aligning up is aligning down the value offset by one
+    // page (alignment - 1).
+    align_down(value + alignment - 1, alignment)
+}
+
+fn is_on_same_page(
+    offset_a: u64, 
+    size_a: u64, 
+    offset_b: u64, 
+    granularity: u64
+) -> bool {
+    // The specification requires that linear and non-linear
+    // resources be placed on separate pages of size
+    // `granularity`. The end of the page the first object (A)
+    // is allocated on is the actual end of the object (its
+    // offset plus the length) down-aligned to the page size
+    // (granularity). Then, the start of the second object's
+    // page (B) is the start of the object (the offset) aligned
+    // down to the granularity.
+    let end_a = offset_a + size_a - 1;
+    let end_page_a = align_down(end_a, granularity);
+    let start_page_b = align_down(offset_b, granularity);
+
+    // The two objects are on the same page if the end of the
+    // first page overlaps the start of the second page.
+    end_page_a >= start_page_b
+}
+
+fn granularity_conflict(
+    type_a: ResourceType, 
+    type_b: ResourceType
+) -> bool {
+    // If one of the two memory chunks has a "free" resource
+    // (i.e., it is not currently allocated), there is no
+    // conflict.
+    if type_a == ResourceType::Free || type_b == ResourceType::Free {
+        return false;
+    }
+
+    // Otherwise, there is a conflict if the two resources are
+    // not of the same type (that is, if one is linear and the
+    // other non-linear).
+    type_a != type_b
 }

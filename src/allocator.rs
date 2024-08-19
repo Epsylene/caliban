@@ -1,7 +1,7 @@
 mod memory;
 mod suballocator;
 
-use memory::{MemoryLocation, MemoryRegion};
+use memory::{MemoryLocation, MemoryRegion, ResourceType};
 use suballocator::ChunkId;
 
 use vk::DeviceMemory;
@@ -18,37 +18,51 @@ pub struct Allocation {
 }
 
 pub struct Allocator {
-    instance: Instance,
-    device: Device,
     regions: Vec<MemoryRegion>,
+    granularity: u64,
 }
 
 impl Allocator {
     pub fn new(instance: Instance, device: Device, physical_device: vk::PhysicalDevice) -> Self {
         // Get the memory properties of the device.
-        let device_properties = unsafe {
+        let memory_properties = unsafe {
             instance.get_physical_device_memory_properties(physical_device)
         };
 
         // Then, create a memory region for each memory type
         // supported by the device. The region registers the
         // property flags and the index of the memory type.
-        let regions = device_properties.memory_types
+        let regions = memory_properties.memory_types
             .iter()
             .enumerate()
             .map(|(index, memory_type)| {
                 MemoryRegion::new(memory_type.property_flags, index)
             })
             .collect();
+
+        let device_properties = unsafe {
+            instance.get_physical_device_properties(physical_device)
+        };
+
+        // The granularity of the device is a secondary
+        // alignement constraint that must be satisfied when
+        // linear and non-linear resources are placed
+        // contiguously in memory.
+        let granularity = device_properties.limits.buffer_image_granularity;
         
         Self {
-            instance,
-            device,
             regions,
+            granularity,
         }
     }
 
-    fn allocate(&mut self, requirements: vk::MemoryRequirements, location: MemoryLocation) -> Allocation {
+    fn allocate(
+        &mut self, 
+        device: &Device,
+        requirements: vk::MemoryRequirements, 
+        location: MemoryLocation,
+        resource_type: ResourceType,
+    ) -> Allocation {
         // Determine the memory properties based on the desired
         // location: for a device-local memory, we only need to
         // set the DEVICE_LOCAL flag, while for data shared
@@ -68,9 +82,11 @@ impl Allocator {
         // Then, allocate a memory block from the region and
         // return the allocation.
         region.allocate(
-            &self.device, 
+            device,
             requirements.size,
             requirements.alignment,
+            self.granularity,
+            resource_type,
         )
     }
 
@@ -79,7 +95,7 @@ impl Allocator {
         // the allocation, and free the chunk in the block
         // corresponding to the allocation.
         let region = &mut self.regions[allocation.memory_type];
-        region.free(allocation.block_index, allocation.offset, device);
+        region.free(device, allocation.block_index, allocation.offset);
     }
 
     fn find_memory_type(&self, requirements: vk::MemoryRequirements, properties: vk::MemoryPropertyFlags) -> usize {
