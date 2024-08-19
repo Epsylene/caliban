@@ -2,6 +2,8 @@ use crate::renderer::Renderer;
 use winit::window::Window;
 use anyhow::Result;
 
+/// Main application struct, which holds the renderer and the
+/// window.
 pub struct App {
     pub renderer: Option<Renderer>,
     pub window: Option<Window>,
@@ -19,8 +21,8 @@ impl App {
         }
     }
 
-    /// Initialize the application with the passed window
-    /// handle and a new Vulkan renderer.
+    /// Initialize the application with the given window handle
+    /// and a new Vulkan renderer.
     pub fn init(&mut self, window: Window) -> Result<()> {
         let renderer = unsafe { Renderer::create(&window)? };
         self.renderer = Some(renderer);

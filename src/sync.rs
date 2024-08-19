@@ -40,7 +40,7 @@ pub unsafe fn create_sync_objects(
         frame.render_finished_semaphore = device.create_semaphore(&semaphore_info, None)?;
         
         // Furthermore, we need to create a fence for each
-        // frame to syncg the CPU with the GPU: if the CPU is
+        // frame to sync the CPU with the GPU: if the CPU is
         // submitting work faster than the GPU can process it,
         // semaphores and command buffers will be used for
         // multiple frames at the same time. Creating a fence

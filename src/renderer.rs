@@ -28,38 +28,49 @@ pub const VALIDATION_LAYER: vk::ExtensionName = vk::ExtensionName::from_bytes(b"
 pub const PORTABILITY_MACOS_VERSION: Version = Version::new(1, 3, 216);
 pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
+/// Application data for rendering.
 #[derive(Default)]
 pub struct RenderData {
+    /// The surface to render to.
     pub surface: vk::SurfaceKHR,
+    /// Debug messenger for the validation layers.
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
+    /// The physical device (GPU) used for rendering.
     pub physical_device: vk::PhysicalDevice,
+    /// Queue for graphics operations.
     pub graphics_queue: vk::Queue,
+    /// Queue family index for graphics operations.
     pub graphics_queue_family: u32,
+    /// Swapchain object to present rendering results (an array
+    /// of presentable images) to a surface.
     pub swapchain: vk::SwapchainKHR,
+    /// Format of the swapchain images.
     pub swapchain_format: vk::Format,
+    /// Array of presentable images associated with the
+    /// swapchain.
     pub swapchain_images: Vec<vk::Image>,
+    /// Views to the swapchain images.
     pub swapchain_image_views: Vec<vk::ImageView>,
+    /// Extent of the swapchain images.
     pub swapchain_extent: vk::Extent2D,
+    /// Frame data for each frame in flight (in presentation or
+    /// being rendered to).
     pub frames: [FrameData; MAX_FRAMES_IN_FLIGHT],
 }
 
+/// Main renderer struct.
 pub struct Renderer {
-    // - Entry: the Vulkan entry point, the first function to
-    //   call to load the Vulkan library
-    // - Instance: the Vulkan instance, the handle to the Vulkan
-    //   library and the first object to create
-    // - Data: the application data, containing all the objects
-    //   necessary for rendering
-    // - Device: the logical device, the interface to the
-    //   physical device and the object to create other Vulkan
-    //   objects
-    // - Window: handle to the OS window
-    // - Frame: the current frame in the swapchain
-    // - Resized: whether the window has been resized
+    /// Vulkan entry point, used to load the Vulkan library.
     entry: Entry,
+    /// Vulkan instance, the handle to the Vulkan library.
     instance: Instance,
+    /// Application data, containing all the objects necessary
+    /// for rendering.
     data: RenderData,
+    /// Logical device, the interface to the physical device
+    /// and the parent to other Vulkan objects.
     pub device: Device,
+    /// Current frame in the swapchain.
     frame: usize,
 }
 
@@ -409,12 +420,11 @@ unsafe fn create_instance(window: &Window, entry: &Entry, data: &mut RenderData)
         extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
     }
 
-    // Some platforms have not a fully compliant Vulkan
+    // Some platforms (macOS) have not a fully compliant Vulkan
     // implementation, and need since v1.3.216 of the Vulkan
-    // API to enable special portability extensions. One of
-    // those platforms is none other than macOS, so we check
-    // the target OS and the Vulkan API version to enable those
-    // extensions if needed.
+    // API to enable special portability extensions, so we
+    // check for the target OS and the Vulkan version to enable
+    // them.
     let flags = if
         cfg!(target_os = "macos") &&
         entry.version()? >= PORTABILITY_MACOS_VERSION

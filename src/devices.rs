@@ -16,18 +16,18 @@ use vulkanalia::prelude::v1_0::*;
 use anyhow::{anyhow, Result};
 use::log::*;
 
-// Required extensions:
-//  - KHR_SWAPCHAIN_EXTENSION: Required for creating a
-//    swapchain. This is an extension because it isn't part of
-//    the core Vulkan API, which is render-agnostic.
-//  - KHR_DYNAMIC_RENDERING_EXTENSION: Required for dynamic
-//    rendering
+/// Required extensions:
+///  - `KHR_SWAPCHAIN_EXTENSION`: required for creating a
+///    swapchain. This is an extension because it isn't part of
+///    the core Vulkan API, which is render-agnostic.
+///  - `KHR_DYNAMIC_RENDERING_EXTENSION`: required for dynamic
+///    rendering.
+///  - `KHR_SYNCHRONIZATION2_EXTENSION`: extension to simplify
+///    synchronization operations in Vulkan.
 pub const REQUIRED_EXTENSIONS: &[vk::ExtensionName] = &[
     vk::KHR_SWAPCHAIN_EXTENSION.name,
     vk::KHR_DYNAMIC_RENDERING_EXTENSION.name,
     vk::KHR_SYNCHRONIZATION2_EXTENSION.name,
-    vk::KHR_BUFFER_DEVICE_ADDRESS_EXTENSION.name,
-    vk::EXT_DESCRIPTOR_INDEXING_EXTENSION.name,
 ];
 
 // The macro will create an error type with a Display impl that

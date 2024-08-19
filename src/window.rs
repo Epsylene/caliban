@@ -43,6 +43,9 @@ impl ApplicationHandler for App {
             },
             WindowEvent::Resized(size) => {
                 if size.width == 0 || size.height == 0 {
+                    // If resizing has put either the width or
+                    // the height to 0, the window has been
+                    // minimized.
                     self.minimised = true;
                 } else {
                     self.minimised = false;
