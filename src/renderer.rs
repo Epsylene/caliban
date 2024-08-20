@@ -1,10 +1,13 @@
-use crate::{
+use crate::core::{
     commands::*, 
     devices::*, 
     frame::*, 
     image::*, 
     swapchain::*,
     sync::*,
+    allocator::{
+        Allocator, memory::{MemoryLocation, ResourceType}
+    },
 };
 
 use std::collections::HashSet;
@@ -130,7 +133,7 @@ impl Renderer {
 
         Ok(Self { 
             entry, 
-            instance, 
+            instance,
             data, 
             device, 
             frame: 0,

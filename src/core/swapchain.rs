@@ -1,7 +1,6 @@
 use crate::{
     renderer::RenderData,
-    queues::*,
-    image::*,
+    core::{queues::*, image::*},
 };
 
 use vk::KhrSwapchainExtension;

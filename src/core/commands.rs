@@ -1,6 +1,6 @@
 use crate::{
     renderer::RenderData,
-    queues::*, 
+    core::queues::*, 
 };
 
 use vulkanalia::prelude::v1_0::*;

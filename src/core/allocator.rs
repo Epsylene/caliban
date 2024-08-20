@@ -1,4 +1,4 @@
-mod memory;
+pub mod memory;
 mod suballocator;
 
 use memory::{MemoryLocation, MemoryRegion, ResourceType};
@@ -9,8 +9,8 @@ use vulkanalia::prelude::v1_0::*;
 use std::ffi::c_void;
 
 pub struct Allocation {
-    memory: DeviceMemory,
-    offset: u64,
+    pub memory: DeviceMemory,
+    pub offset: u64,
     chunk_id: ChunkId,
     block_index: usize,
     memory_type: usize,
@@ -23,7 +23,10 @@ pub struct Allocator {
 }
 
 impl Allocator {
-    pub fn new(instance: Instance, device: Device, physical_device: vk::PhysicalDevice) -> Self {
+    pub fn new(
+        instance: &Instance, 
+        physical_device: vk::PhysicalDevice
+    ) -> Self {
         // Get the memory properties of the device.
         let memory_properties = unsafe {
             instance.get_physical_device_memory_properties(physical_device)
@@ -56,7 +59,7 @@ impl Allocator {
         }
     }
 
-    fn allocate(
+    pub fn allocate(
         &mut self, 
         device: &Device,
         requirements: vk::MemoryRequirements, 
@@ -90,7 +93,11 @@ impl Allocator {
         )
     }
 
-    fn free(&mut self, allocation: Allocation, device: &Device) {
+    pub fn free(
+        &mut self,
+        device: &Device,
+        allocation: Allocation
+    ) {
         // Get the region corresponding to the memory type of
         // the allocation, and free the chunk in the block
         // corresponding to the allocation.

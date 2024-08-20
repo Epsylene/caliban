@@ -6,9 +6,11 @@ use crate::{
         PORTABILITY_MACOS_VERSION, 
         VALIDATION_ENABLED, 
         VALIDATION_LAYER
-    }, 
-    queues::*, 
-    swapchain::get_swapchain_support,
+    },
+    core::{
+        queues::*, 
+        swapchain::get_swapchain_support,
+    }
 };
 
 use thiserror::Error;

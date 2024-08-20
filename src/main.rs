@@ -1,14 +1,7 @@
-mod renderer;
-mod devices;
-mod queues;
-mod swapchain;
-mod image;
-mod commands;
-mod frame;
-mod sync;
-mod window;
+mod core;
 mod app;
-mod allocator;
+mod renderer;
+mod window;
 
 use winit::event_loop::{EventLoop, ControlFlow};
 use app::App;

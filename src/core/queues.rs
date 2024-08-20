@@ -1,5 +1,5 @@
 
-use crate::devices::SuitabilityError;
+use super::devices::SuitabilityError;
 
 use vulkanalia::prelude::v1_0::*;
 use anyhow::{anyhow, Result};
