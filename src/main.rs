@@ -1,10 +1,5 @@
-mod core;
-mod app;
-mod renderer;
-mod window;
-
 use winit::event_loop::{EventLoop, ControlFlow};
-use app::App;
+use caliban::app::App;
 use anyhow::Result;
 
 fn main() -> Result<()> {

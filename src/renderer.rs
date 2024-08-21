@@ -5,9 +5,6 @@ use crate::core::{
     image::*, 
     swapchain::*,
     sync::*,
-    allocator::{
-        Allocator, memory::{MemoryLocation, ResourceType}
-    },
 };
 
 use std::collections::HashSet;
