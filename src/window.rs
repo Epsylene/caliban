@@ -9,12 +9,12 @@ use winit::{
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attr = Window::default_attributes()
-            .with_title("caliban")
-            .with_inner_size(LogicalSize::new(1024, 576));
-
-        let window = event_loop.create_window(window_attr).unwrap();
         if self.window.is_none() {
+            let window_attr = Window::default_attributes()
+                .with_title("caliban")
+                .with_inner_size(LogicalSize::new(1024, 576));
+
+            let window = event_loop.create_window(window_attr).unwrap();
             self.init(window).unwrap();
         }
     }
