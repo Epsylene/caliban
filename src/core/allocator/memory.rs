@@ -1,14 +1,47 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use vulkanalia::prelude::v1_0::*;
+use anyhow::Result;
+
+use super::Allocation;
+use super::tlsf::Tlsf;
+
+/// How a memory resource will be used.
+pub enum MemoryUse {
+    /// Resource that is only used by the GPU. Corresponds to
+    /// the `DEVICE_LOCAL` flag.
+    GpuOnly,
+    /// Resource that is uploaded from the CPU to the GPU.
+    /// Corresponds to `DEVICE_LOCAL | HOST_VISIBLE`.
+    CpuToGpu,
+}
+
+/// Type of the resource to be allocated.
+pub enum ResourceType {
+    /// The resource is bound to a linear memory block (a
+    /// buffer, for example).
+    Linear,
+    /// The resource is bound to a non-linear memory block (an
+    /// image with `VK_IMAGE_TILING_OPTIMAL`, for example).
+    NonLinear,
+}
 
 /// Portion of memory that is sub-allocated (managed) within a
 /// block.
-struct MemoryChunk {
-    size: u64,
-    offset: u64,
+#[derive(Clone, Copy)]
+pub struct MemoryChunk {
+    /// Size of the chunk in bytes.
+    pub size: u64,
+    /// Offset of the chunk within the memory block.
+    pub offset: u64,
+    /// Index of the previous chunk in the block.
+    pub prev: Option<ChunkId>,
+    /// Index of the next chunk in the block.
+    pub next: Option<ChunkId>,
 }
 
-type ChunkId = usize;
+/// Unique identifier of a chunk within a memory block. This is
+/// in fact just the offset of the chunk within the block.
+pub type ChunkId = u64;
 
 /// Memory block that is allocated from a memory region. It
 /// holds one contiguous slice of `vk::DeviceMemory` and
@@ -20,10 +53,12 @@ struct MemoryBlock {
     /// Size of the memory block.
     size: u64,
     /// List of chunks the block is comprised of.
-    chunks: Vec<MemoryChunk>,
+    chunks: HashMap<ChunkId, MemoryChunk>,
     /// The subset of chunks that are empty and can be
     /// allocated.
-    free_chunks: HashSet<ChunkId>,
+    free_chunks: Tlsf,
+    /// Number of bytes currently allocated from the block.
+    allocated: u64,
 }
 
 impl MemoryBlock {
@@ -45,22 +80,64 @@ impl MemoryBlock {
         };
 
         // At first the block is empty, so it contains a single
-        // chunk...
-        let chunks = vec![MemoryChunk {
+        // chunk at offset 0 that spans the entire size of the
+        // block...
+        let chunk = MemoryChunk {
             size,
             offset: 0,
-        }];
+            prev: None,
+            next: None,
+        };
+        let chunks = HashMap::from([(0, chunk)]);
 
-        // ...that is part of the free list.
-        let mut free_chunks = HashSet::new();
-        free_chunks.insert(0);
+        // ...and is not in use, so part of the free list. The
+        // "ID" of a chunk is given by its offset, since it is
+        // sufficient to identify the chunk within the block.
+        let mut free_chunks = Tlsf::new();
+        free_chunks.insert_chunk(chunk);
 
-        // Create a new memory block with the allocated memory.
         Self {
             memory,
             size,
             chunks,
             free_chunks,
+            allocated: 0,
         }
+    }
+}
+
+/// Memory pool blocks are allocated from. Each region
+/// corresponds to a single Vulkan memory type.
+pub struct MemoryRegion {
+    /// List of memory blocks that are allocated from the
+    /// region.
+    blocks: Vec<MemoryBlock>,
+    /// Index of the memory type of the region.
+    pub memory_type: usize,
+    /// Properties of the memory type of the region.
+    pub properties: vk::MemoryPropertyFlags,
+}
+
+impl MemoryRegion {
+    pub fn new(
+        memory_type: usize,
+        properties: vk::MemoryPropertyFlags,
+    ) -> Self {
+        Self {
+            blocks: Vec::new(),
+            properties,
+            memory_type,
+        }
+    }
+
+    pub fn allocate(
+        &mut self,
+        device: &Device,
+        size: u64,
+        alignment: u64,
+        granularity: u64,
+        resource_type: ResourceType,
+    ) -> Result<Allocation> {
+        todo!()
     }
 }
