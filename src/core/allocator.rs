@@ -2,7 +2,6 @@ mod memory;
 mod tlsf;
 
 use vulkanalia::prelude::v1_0::*;
-use anyhow::Result;
 use memory::{MemoryUse, ResourceType, MemoryRegion};
 
 /// A memory allocation object, that holds the information
@@ -21,10 +20,6 @@ pub struct Allocator {
     /// memory region corresponds to a single Vulkan memory
     /// type.
     regions: Vec<MemoryRegion>,
-    /// Device granularity, a secondary alignment constraint
-    /// that must be satisfied when linear and non-linear
-    /// resources are placed contiguously in memory.
-    granularity: u64,
 }
 
 impl Allocator {
@@ -48,19 +43,8 @@ impl Allocator {
             })
             .collect();
 
-        let device_properties = unsafe {
-            instance.get_physical_device_properties(physical_device)
-        };
-
-        // The granularity of the device is a secondary
-        // alignement constraint that must be satisfied when
-        // linear and non-linear resources are placed
-        // contiguously in memory.
-        let granularity = device_properties.limits.buffer_image_granularity;
-        
         Self {
             regions,
-            granularity,
         }
     }
 
@@ -70,13 +54,13 @@ impl Allocator {
         requirements: vk::MemoryRequirements, 
         location: MemoryUse,
         resource_type: ResourceType,
-    ) -> Result<Allocation> {
-        // Determine the memory properties based on the desired
-        // use: for a gpu-only memory, we only need to set the
+    ) -> Allocation {
+        // Request memory properties based on the desired use:
+        // for a gpu-only memory, we only need to set the
         // DEVICE_LOCAL flag, while for data transfered between
         // the host to the device, we want to set the
         // DEVICE_LOCAL and HOST_VISIBLE flags.
-        let memory_properties = match location {
+        let requested_properties = match location {
             MemoryUse::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
             MemoryUse::CpuToGpu => vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE,
         };
@@ -84,7 +68,7 @@ impl Allocator {
         // Find the memory type that satisfies the requirements
         // and properties, and select the region corresponding
         // to this memory type.
-        let memory_type = self.find_memory_type(requirements, memory_properties);
+        let memory_type = self.find_memory_type(requirements, requested_properties);
         let region = &mut self.regions[memory_type];
 
         // Then, allocate a memory block from the region and
@@ -93,7 +77,6 @@ impl Allocator {
             device,
             requirements.size,
             requirements.alignment,
-            self.granularity,
             resource_type,
         )
     }
